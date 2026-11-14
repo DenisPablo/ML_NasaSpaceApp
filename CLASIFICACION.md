@@ -13,6 +13,8 @@ Es **independiente** de las fases 2–4 (agregación diaria, LightGBM, serving v
 | Backend (FastAPI + DuckDB) | Sumar conteos por zona y período, aplicar `factor × MODIS`, rangos, `estado` / `confianza` / anomalía | FireHistoryInterfaceAPI |
 | Frontend (React) | Solo mostrar | FireHistoryInterface |
 
+> Guía paso a paso para el equipo: [EJECUCION_CLASIFICACION.md](EJECUCION_CLASIFICACION.md).
+
 ## Cómo se ejecuta
 
 ```bash
