@@ -60,27 +60,29 @@ def focal_loss_objective(
     alpha: float = 0.75,
 ) -> Callable[[np.ndarray, lgb.Dataset], tuple[np.ndarray, np.ndarray]]:
     """Return custom Binary Focal Loss (grad, hess) objective for LightGBM."""
+    cached: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
     def _fobj(preds: np.ndarray, train_data: lgb.Dataset) -> tuple[np.ndarray, np.ndarray]:
-        y = train_data.get_label()
-        p = np.clip(sigmoid(preds), 1e-7, 1.0 - 1e-7)
+        did = id(train_data)
+        entry = cached.get(did)
+        if entry is None:
+            y = train_data.get_label()
+            pos = y == 1
+            alpha_t = np.where(pos, alpha, 1.0 - alpha).astype(np.float32)
+            sign_t = np.where(pos, 1.0, -1.0).astype(np.float32)
+            entry = (pos, alpha_t, sign_t)
+            cached[did] = entry
+        pos, alpha_t, sign_t = entry
 
-        alpha_t = np.where(y == 1, alpha, 1.0 - alpha)
-        p_t = np.where(y == 1, p, 1.0 - p)
-        one_minus_pt = 1.0 - p_t
-        log_pt = np.log(p_t)
+        z = np.clip(preds.astype(np.float32, copy=False), -30.0, 30.0)
+        p = np.clip(1.0 / (1.0 + np.exp(-z)), 1e-7, 1.0 - 1e-7)
+        pt = np.where(pos, p, 1.0 - p)
+        om_pt = 1.0 - pt
+        om_g = (om_pt * om_pt) if gamma == 2.0 else (om_pt ** gamma)
 
-        # dL/dz where p = sigmoid(z)
-        dp_dz = p * (1.0 - p)
-        dpt_dz = np.where(y == 1, dp_dz, -dp_dz)
-        dL_dpt = alpha_t * (gamma * (one_minus_pt ** (gamma - 1.0)) * log_pt - (one_minus_pt ** gamma) / p_t)
-        grad = dL_dpt * dpt_dz
-
+        grad = alpha_t * sign_t * om_g * (gamma * pt * np.log(pt) - om_pt)
         # Positive Gauss-Newton / curvature approximation for stable tree splits
-        hess = np.maximum(
-            alpha_t * (one_minus_pt ** gamma) * dp_dz,
-            1e-6,
-        )
+        hess = np.maximum(alpha_t * om_g * pt * om_pt, 1e-6)
         return grad.astype(np.float64), hess.astype(np.float64)
 
     return _fobj
@@ -160,8 +162,11 @@ def predict_hurdle(
         return np.empty(0, dtype=np.float32), np.empty(0, dtype=np.float32)
     raw_scores = clf_booster.predict(X, raw_score=True)
     pi_hat = sigmoid(raw_scores).astype(np.float32)
-    mu_hat = np.maximum(reg_model.predict(X), 0.0).astype(np.float32)
-    y_hat = np.where(pi_hat >= occ_threshold, pi_hat * mu_hat, 0.0).astype(np.float32)
+    y_hat = np.zeros(X.shape[0], dtype=np.float32)
+    active_mask = pi_hat >= occ_threshold
+    if np.any(active_mask):
+        mu_active = np.maximum(reg_model.predict(X[active_mask]), 0.0).astype(np.float32)
+        y_hat[active_mask] = (pi_hat[active_mask] * mu_active).astype(np.float32)
     return y_hat, pi_hat
 
 
@@ -225,7 +230,6 @@ def train_hurdle_in_batches(
         val_spatial = f"(cell_id // {GRID_N_COLS}) BETWEEN {val_min} AND {val_max}"
         date_window = f"YEAR(fecha) BETWEEN {start_year} AND {end_year}"
         neg_thresh = max(1, int(round(neg_sample_rate * 1000)))
-        neg_weight = 1.0 / max(neg_sample_rate, 1e-3)
 
         occ_X_parts: list[np.ndarray] = []
         occ_y_parts: list[np.ndarray] = []
@@ -236,36 +240,36 @@ def train_hurdle_in_batches(
         val_y_frp_parts: list[np.ndarray] = []
         occ_rows_used = 0
 
-        # Extract sampled training, positive intensity, and LOBBO validation batches year by year
+        # Extract sampled training, positive intensity, and LOBBO validation in one Parquet scan per year
         for p_file in year_files:
             p_posix = p_file.as_posix()
-            where_occ = (
-                f"{date_window} AND {train_spatial} AND "
+            where_combined = (
+                f"{date_window} AND ({train_spatial} OR {val_spatial}) AND "
                 f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
             )
-            X_b, y_occ_b, _ = _fetch_float32_batch(con, _feature_select_sql(p_posix, where_occ))
-            if X_b.shape[0] > 0:
-                occ_X_parts.append(X_b)
-                occ_y_parts.append(y_occ_b)
-                occ_rows_used += int(X_b.shape[0])
-
-            where_pos_b = f"{date_window} AND {train_spatial} AND y_occ_viirs = 1 AND phi_viirs > 0"
-            X_pos_b, _, y_pos_b = _fetch_float32_batch(con, _feature_select_sql(p_posix, where_pos_b))
-            if X_pos_b.shape[0] > 0:
-                pos_X_parts.append(X_pos_b)
-                pos_y_parts.append(y_pos_b)
-
-            where_val_b = (
-                f"{date_window} AND {val_spatial} AND "
-                f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
+            X_all, y_occ_all, y_frp_all = _fetch_float32_batch(
+                con, _feature_select_sql(p_posix, where_combined)
             )
-            X_val_b, y_val_occ_b, y_val_frp_b = _fetch_float32_batch(
-                con, _feature_select_sql(p_posix, where_val_b)
-            )
-            if X_val_b.shape[0] > 0:
-                val_X_parts.append(X_val_b)
-                val_y_occ_parts.append(y_val_occ_b)
-                val_y_frp_parts.append(y_val_frp_b)
+            if X_all.shape[0] > 0:
+                grid_row = X_all[:, 11]
+                train_mask = (grid_row < buf_low) | (grid_row > buf_high)
+                val_mask = ~train_mask
+                pos_mask = train_mask & (y_occ_all == 1) & (y_frp_all > 0.0)
+
+                if np.any(train_mask):
+                    X_b = X_all[train_mask]
+                    occ_X_parts.append(X_b)
+                    occ_y_parts.append(y_occ_all[train_mask])
+                    occ_rows_used += int(X_b.shape[0])
+
+                if np.any(pos_mask):
+                    pos_X_parts.append(X_all[pos_mask])
+                    pos_y_parts.append(y_frp_all[pos_mask])
+
+                if np.any(val_mask):
+                    val_X_parts.append(X_all[val_mask])
+                    val_y_occ_parts.append(y_occ_all[val_mask])
+                    val_y_frp_parts.append(y_frp_all[val_mask])
 
             tracker.update(
                 1,
@@ -280,7 +284,6 @@ def train_hurdle_in_batches(
 
         X_occ = np.vstack(occ_X_parts)
         y_occ = np.concatenate(occ_y_parts)
-        weights_occ = np.where(y_occ == 1, 1.0, neg_weight).astype(np.float32)
 
         X_pos = np.vstack(pos_X_parts)
         y_pos = np.concatenate(pos_y_parts)
@@ -290,13 +293,14 @@ def train_hurdle_in_batches(
             "learning_rate": 0.05,
             "num_leaves": 63,
             "max_bin": 255,
+            "force_col_wise": True,
             "n_jobs": -1,
             "verbose": -1,
             "seed": 42,
         }
 
         # Stage 1a: Train Focal Loss classifier once across all combined years (no chronological drift)
-        dtrain = lgb.Dataset(X_occ, label=y_occ, weight=weights_occ, free_raw_data=True)
+        dtrain = lgb.Dataset(X_occ, label=y_occ, free_raw_data=True)
         clf_booster = lgb.train(
             {**lgb_params, "objective": fobj},
             dtrain,
