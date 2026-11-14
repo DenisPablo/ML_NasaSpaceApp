@@ -483,14 +483,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/clean/firms_san_luis_clean.parquet"),
+        default=Path("data/clean/firms_argentina_clean.parquet"),
         help="Ruta del archivo Parquet de salida.",
     )
     parser.add_argument(
         "--region",
         choices=["san_luis", "argentina"],
-        default="san_luis",
-        help="Alcance espacial (por defecto: san_luis).",
+        default="argentina",
+        help="Alcance espacial (por defecto: argentina).",
     )
     parser.add_argument(
         "--mask-parquet",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import time
 from typing import Callable
@@ -33,9 +33,13 @@ def build_daily_aggregation_sql(
     start_date: date,
     end_date: date,
     mask_posix: str | None = None,
+    emit_start_date: date | None = None,
+    emit_end_date: date | None = None,
 ) -> str:
     """Build DuckDB SQL for cartesian zero imputation and 3d/7d/30d rolling windows."""
     cells_source = mask_posix if mask_posix is not None else input_posix
+    out_start = emit_start_date if emit_start_date is not None else start_date
+    out_end = emit_end_date if emit_end_date is not None else end_date
     return f"""
     WITH celdas_activas AS (
         SELECT DISTINCT cell_id::INT32 AS cell_id
@@ -88,59 +92,64 @@ def build_daily_aggregation_sql(
         FROM grilla_base g
         LEFT JOIN firms_diario f
             ON g.cell_id = f.cell_id AND g.fecha = f.fecha
+    ),
+    ventanas AS (
+        SELECT
+            cell_id,
+            fecha,
+            n_modis,
+            phi_modis,
+            phi_max_modis,
+            scan_bar_modis,
+            track_bar_modis,
+            y_occ_modis,
+            SUM(n_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_modis_3d,
+            SUM(n_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_modis_7d,
+            SUM(n_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_modis_30d,
+            SUM(phi_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_modis_3d,
+            SUM(phi_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_modis_7d,
+            SUM(phi_modis) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_modis_30d,
+            n_viirs,
+            phi_viirs,
+            phi_max_viirs,
+            scan_bar_viirs,
+            track_bar_viirs,
+            y_occ_viirs,
+            SUM(n_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_viirs_3d,
+            SUM(n_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_viirs_7d,
+            SUM(n_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+            )::INT32 AS n_viirs_30d,
+            SUM(phi_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_viirs_3d,
+            SUM(phi_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_viirs_7d,
+            SUM(phi_viirs) OVER (
+                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+            )::FLOAT AS phi_viirs_30d
+        FROM imputado
     )
-    SELECT
-        cell_id,
-        fecha,
-        n_modis,
-        phi_modis,
-        phi_max_modis,
-        scan_bar_modis,
-        track_bar_modis,
-        y_occ_modis,
-        SUM(n_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_modis_3d,
-        SUM(n_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_modis_7d,
-        SUM(n_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_modis_30d,
-        SUM(phi_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_modis_3d,
-        SUM(phi_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_modis_7d,
-        SUM(phi_modis) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_modis_30d,
-        n_viirs,
-        phi_viirs,
-        phi_max_viirs,
-        scan_bar_viirs,
-        track_bar_viirs,
-        y_occ_viirs,
-        SUM(n_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_viirs_3d,
-        SUM(n_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_viirs_7d,
-        SUM(n_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        )::INT32 AS n_viirs_30d,
-        SUM(phi_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_viirs_3d,
-        SUM(phi_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_viirs_7d,
-        SUM(phi_viirs) OVER (
-            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        )::FLOAT AS phi_viirs_30d
-    FROM imputado
+    SELECT *
+    FROM ventanas
+    WHERE fecha BETWEEN DATE '{out_start.isoformat()}' AND DATE '{out_end.isoformat()}'
     ORDER BY cell_id, fecha
     """
 
@@ -153,16 +162,15 @@ def run_aggregation_pipeline(
     end_date: date | None = None,
     progress_factory: Callable[[int], ProgressTracker] | None = None,
 ) -> AggregationStats:
-    """Execute Phase 2 DuckDB daily aggregation with progress percentages."""
+    """Execute Phase 2 DuckDB daily aggregation (single file or year-partitioned dir)."""
     if not input_parquet.exists():
         raise FileNotFoundError(f"No existe el archivo de entrada: {input_parquet}")
 
-    tracker = (
-        progress_factory(100)
-        if progress_factory is not None
-        else ProgressTracker(total_units=100)
-    )
-    output_parquet.parent.mkdir(parents=True, exist_ok=True)
+    is_partitioned = output_parquet.suffix.lower() != ".parquet"
+    if is_partitioned:
+        output_parquet.mkdir(parents=True, exist_ok=True)
+    else:
+        output_parquet.parent.mkdir(parents=True, exist_ok=True)
 
     con = duckdb.connect(database=":memory:")
     try:
@@ -181,56 +189,74 @@ def run_aggregation_pipeline(
         if total_days <= 0:
             raise ValueError(f"Rango de fechas invalido: {eff_start} .. {eff_end}")
 
-        tracker.update(
-            15,
-            label="Leyendo metadata y grilla",
-            rows_read=int(input_rows),
-            rows_kept=0,
-            force=True,
+        years = list(range(eff_start.year, eff_end.year + 1)) if is_partitioned else [0]
+        total_units = len(years) + 1
+        tracker = (
+            progress_factory(total_units)
+            if progress_factory is not None
+            else ProgressTracker(total_units=total_units)
         )
 
-        query = build_daily_aggregation_sql(
-            input_posix=input_posix,
-            start_date=eff_start,
-            end_date=eff_end,
-            mask_posix=mask_posix,
-        )
-        tracker.update(
-            25,
-            label="Calculando grilla cartesiana + ventanas 3d/7d/30d",
-            rows_read=int(input_rows),
-            rows_kept=0,
-            force=True,
-        )
+        total_rows = 0
+        positive_rows = 0
+        active_cells = 0
 
-        out_posix = output_parquet.as_posix()
-        con.execute(f"COPY ({query}) TO '{out_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        if is_partitioned:
+            for year in years:
+                y_start = max(eff_start, date(year, 1, 1))
+                y_end = min(eff_end, date(year, 12, 31))
+                lookback_start = max(eff_start, y_start - timedelta(days=29))
+                part_file = output_parquet / f"year={year}" / "data.parquet"
+                part_file.parent.mkdir(parents=True, exist_ok=True)
+                query = build_daily_aggregation_sql(
+                    input_posix=input_posix,
+                    start_date=lookback_start,
+                    end_date=y_end,
+                    mask_posix=mask_posix,
+                    emit_start_date=y_start,
+                    emit_end_date=y_end,
+                )
+                part_posix = part_file.as_posix()
+                con.execute(f"COPY ({query}) TO '{part_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+                y_rows, y_pos, y_cells = con.execute(
+                    f"SELECT COUNT(*)::BIGINT, SUM(y_occ_viirs)::BIGINT, COUNT(DISTINCT cell_id)::BIGINT FROM read_parquet('{part_posix}')"
+                ).fetchone()
+                total_rows += int(y_rows or 0)
+                positive_rows += int(y_pos or 0)
+                active_cells = max(active_cells, int(y_cells or 0))
+                tracker.update(
+                    1,
+                    label=f"Anio {year} exportado",
+                    rows_read=int(input_rows),
+                    rows_kept=total_rows,
+                    force=True,
+                )
+        else:
+            query = build_daily_aggregation_sql(
+                input_posix=input_posix,
+                start_date=eff_start,
+                end_date=eff_end,
+                mask_posix=mask_posix,
+            )
+            out_posix = output_parquet.as_posix()
+            con.execute(f"COPY ({query}) TO '{out_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            tracker.update(
+                1,
+                label="Parquet ZSTD escrito",
+                rows_read=int(input_rows),
+                rows_kept=0,
+                force=True,
+            )
+            r_tot, r_cells, r_pos = con.execute(
+                f"SELECT COUNT(*)::BIGINT, COUNT(DISTINCT cell_id)::BIGINT, SUM(y_occ_viirs)::BIGINT FROM read_parquet('{out_posix}')"
+            ).fetchone()
+            total_rows = int(r_tot or 0)
+            active_cells = int(r_cells or 0)
+            positive_rows = int(r_pos or 0)
 
-        tracker.update(
-            45,
-            label="Escribiendo Parquet ZSTD",
-            rows_read=int(input_rows),
-            rows_kept=0,
-            force=True,
-        )
-
-        total_rows, active_cells, positive_rows = con.execute(
-            f"""
-            SELECT
-                COUNT(*)::BIGINT,
-                COUNT(DISTINCT cell_id)::BIGINT,
-                SUM(y_occ_viirs)::BIGINT
-            FROM read_parquet('{out_posix}')
-            """
-        ).fetchone()
-
-        total_rows = int(total_rows or 0)
-        active_cells = int(active_cells or 0)
-        positive_rows = int(positive_rows or 0)
         zero_rate = ((total_rows - positive_rows) / total_rows) if total_rows > 0 else 0.0
-
         tracker.update(
-            15,
+            1,
             label="Fase 2 completada",
             rows_read=int(input_rows),
             rows_kept=total_rows,
@@ -259,14 +285,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("data/clean/firms_san_luis_clean.parquet"),
+        default=Path("data/clean/firms_argentina_clean.parquet"),
         help="Parquet limpio generado en la Fase 1.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/processed/firms_san_luis_daily.parquet"),
-        help="Parquet diario de salida con ceros imputados y ventanas moviles.",
+        default=Path("data/processed/firms_argentina_daily"),
+        help="Archivo .parquet o directorio particionado por anio (year=YYYY).",
     )
     parser.add_argument(
         "--mask-parquet",

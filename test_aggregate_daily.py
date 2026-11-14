@@ -100,3 +100,36 @@ def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -
 
     pcts = [float(m) for m in re.findall(r"(\d+\.\d+)%", buf.getvalue())]
     assert pcts[-1] == 100.0
+
+
+def test_yearly_partitioned_output_preserves_cross_year_rolling_windows(tmp_path: Path) -> None:
+    clean_parquet = tmp_path / "clean.parquet"
+    out_dir = tmp_path / "daily_by_year"
+
+    rows = [
+        _make_clean_row(100, date(2023, 12, 30), frp=15.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
+        _make_clean_row(100, date(2024, 1, 2), frp=5.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
+    ]
+    pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
+
+    buf = io.StringIO()
+    stats = run_aggregation_pipeline(
+        input_parquet=clean_parquet,
+        output_parquet=out_dir,
+        progress_factory=lambda total: ProgressTracker(total, stream=buf, is_tty=False),
+    )
+
+    assert stats.total_days == 4
+    assert stats.total_rows == 4
+    assert (out_dir / "year=2023" / "data.parquet").exists()
+    assert (out_dir / "year=2024" / "data.parquet").exists()
+
+    y2024 = pq.read_table(out_dir / "year=2024" / "data.parquet").to_pylist()
+    assert [r["fecha"] for r in y2024] == [date(2024, 1, 1), date(2024, 1, 2)]
+    # Jan 1 sees Dec 30 inside 3d window; Jan 2 sees Dec 30 inside 7d window
+    assert y2024[0]["phi_viirs_3d"] == 15.0
+    assert y2024[1]["phi_viirs_3d"] == 5.0
+    assert y2024[1]["phi_viirs_7d"] == 20.0
+
+    pcts = [float(m) for m in re.findall(r"(\d+\.\d+)%", buf.getvalue())]
+    assert pcts[-1] == 100.0
