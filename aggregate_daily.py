@@ -55,11 +55,16 @@ def build_daily_aggregation_sql(
         SELECT
             cell_id::INT32 AS cell_id,
             fecha_local::DATE AS fecha,
-            COUNT(*)::INT32 AS n_viirs,
-            SUM(frp)::FLOAT AS phi_viirs,
-            MAX(frp)::FLOAT AS phi_max_viirs,
-            AVG(scan)::FLOAT AS scan_bar,
-            AVG(track)::FLOAT AS track_bar
+            COUNT(*) FILTER (WHERE sensor_family = 'MODIS')::INT32 AS n_modis,
+            COALESCE(SUM(frp) FILTER (WHERE sensor_family = 'MODIS'), 0.0)::FLOAT AS phi_modis,
+            COALESCE(MAX(frp) FILTER (WHERE sensor_family = 'MODIS'), 0.0)::FLOAT AS phi_max_modis,
+            AVG(scan) FILTER (WHERE sensor_family = 'MODIS')::FLOAT AS scan_bar_modis,
+            AVG(track) FILTER (WHERE sensor_family = 'MODIS')::FLOAT AS track_bar_modis,
+            COUNT(*) FILTER (WHERE sensor_family = 'VIIRS')::INT32 AS n_viirs,
+            COALESCE(SUM(frp) FILTER (WHERE sensor_family = 'VIIRS'), 0.0)::FLOAT AS phi_viirs,
+            COALESCE(MAX(frp) FILTER (WHERE sensor_family = 'VIIRS'), 0.0)::FLOAT AS phi_max_viirs,
+            AVG(scan) FILTER (WHERE sensor_family = 'VIIRS')::FLOAT AS scan_bar_viirs,
+            AVG(track) FILTER (WHERE sensor_family = 'VIIRS')::FLOAT AS track_bar_viirs
         FROM read_parquet('{input_posix}')
         WHERE fecha_local BETWEEN DATE '{start_date.isoformat()}' AND DATE '{end_date.isoformat()}'
         GROUP BY cell_id, fecha_local
@@ -68,12 +73,18 @@ def build_daily_aggregation_sql(
         SELECT
             g.cell_id,
             g.fecha,
+            COALESCE(f.n_modis, 0)::INT32 AS n_modis,
+            COALESCE(f.phi_modis, 0.0)::FLOAT AS phi_modis,
+            COALESCE(f.phi_max_modis, 0.0)::FLOAT AS phi_max_modis,
+            f.scan_bar_modis::FLOAT AS scan_bar_modis,
+            f.track_bar_modis::FLOAT AS track_bar_modis,
+            CASE WHEN COALESCE(f.n_modis, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_modis,
             COALESCE(f.n_viirs, 0)::INT32 AS n_viirs,
             COALESCE(f.phi_viirs, 0.0)::FLOAT AS phi_viirs,
             COALESCE(f.phi_max_viirs, 0.0)::FLOAT AS phi_max_viirs,
-            f.scan_bar::FLOAT AS scan_bar,
-            f.track_bar::FLOAT AS track_bar,
-            CASE WHEN COALESCE(f.n_viirs, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ
+            f.scan_bar_viirs::FLOAT AS scan_bar_viirs,
+            f.track_bar_viirs::FLOAT AS track_bar_viirs,
+            CASE WHEN COALESCE(f.n_viirs, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_viirs
         FROM grilla_base g
         LEFT JOIN firms_diario f
             ON g.cell_id = f.cell_id AND g.fecha = f.fecha
@@ -81,12 +92,36 @@ def build_daily_aggregation_sql(
     SELECT
         cell_id,
         fecha,
+        n_modis,
+        phi_modis,
+        phi_max_modis,
+        scan_bar_modis,
+        track_bar_modis,
+        y_occ_modis,
+        SUM(n_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        )::INT32 AS n_modis_3d,
+        SUM(n_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        )::INT32 AS n_modis_7d,
+        SUM(n_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+        )::INT32 AS n_modis_30d,
+        SUM(phi_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        )::FLOAT AS phi_modis_3d,
+        SUM(phi_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        )::FLOAT AS phi_modis_7d,
+        SUM(phi_modis) OVER (
+            PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+        )::FLOAT AS phi_modis_30d,
         n_viirs,
         phi_viirs,
         phi_max_viirs,
-        scan_bar,
-        track_bar,
-        y_occ,
+        scan_bar_viirs,
+        track_bar_viirs,
+        y_occ_viirs,
         SUM(n_viirs) OVER (
             PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
         )::INT32 AS n_viirs_3d,
@@ -184,7 +219,7 @@ def run_aggregation_pipeline(
             SELECT
                 COUNT(*)::BIGINT,
                 COUNT(DISTINCT cell_id)::BIGINT,
-                SUM(y_occ)::BIGINT
+                SUM(y_occ_viirs)::BIGINT
             FROM read_parquet('{out_posix}')
             """
         ).fetchone()
@@ -224,13 +259,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("data/clean/viirs_snpp_san_luis_clean.parquet"),
+        default=Path("data/clean/firms_san_luis_clean.parquet"),
         help="Parquet limpio generado en la Fase 1.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/processed/viirs_snpp_san_luis_daily.parquet"),
+        default=Path("data/processed/firms_san_luis_daily.parquet"),
         help="Parquet diario de salida con ceros imputados y ventanas moviles.",
     )
     parser.add_argument(

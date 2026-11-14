@@ -12,7 +12,14 @@ from aggregate_daily import run_aggregation_pipeline
 from clean_firms import OUTPUT_SCHEMA, ProgressTracker
 
 
-def _make_clean_row(cell_id: int, fecha: date, frp: float, scan: float, acq_time: str) -> dict:
+def _make_clean_row(
+    cell_id: int,
+    fecha: date,
+    frp: float,
+    scan: float,
+    acq_time: str,
+    sensor_family: str = "VIIRS",
+) -> dict:
     return {
         "cell_id": cell_id,
         "col": cell_id,
@@ -29,9 +36,9 @@ def _make_clean_row(cell_id: int, fecha: date, frp: float, scan: float, acq_time
         "scan": scan,
         "track": 0.4,
         "confidence": "n",
-        "satellite": "SNPP",
-        "instrument": "SNPP",
-        "sensor_family": "VIIRS",
+        "satellite": "Terra" if sensor_family == "MODIS" else "SNPP",
+        "instrument": sensor_family,
+        "sensor_family": sensor_family,
         "version": "2",
         "daynight": "D",
         "type": 0,
@@ -46,9 +53,10 @@ def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -
     daily_parquet = tmp_path / "daily.parquet"
 
     rows = [
-        _make_clean_row(100, date(2024, 1, 1), frp=10.0, scan=0.4, acq_time="1500"),
-        _make_clean_row(100, date(2024, 1, 1), frp=25.0, scan=0.6, acq_time="1700"),
-        _make_clean_row(200, date(2024, 1, 4), frp=5.0, scan=0.5, acq_time="1300"),
+        _make_clean_row(100, date(2024, 1, 1), frp=10.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
+        _make_clean_row(100, date(2024, 1, 1), frp=25.0, scan=0.6, acq_time="1700", sensor_family="VIIRS"),
+        _make_clean_row(100, date(2024, 1, 1), frp=12.0, scan=1.5, acq_time="1510", sensor_family="MODIS"),
+        _make_clean_row(200, date(2024, 1, 4), frp=5.0, scan=0.5, acq_time="1300", sensor_family="VIIRS"),
     ]
     pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
 
@@ -66,17 +74,23 @@ def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -
     assert stats.zero_rate == 0.75
 
     tbl = pq.read_table(daily_parquet)
+    assert tbl.schema.field("phi_modis").type == pa.float32()
     assert tbl.schema.field("phi_viirs").type == pa.float32()
     assert tbl.schema.field("phi_viirs_7d").type == pa.float32()
     assert tbl.schema.field("n_viirs").type == pa.int32()
 
     cell_100 = [r for r in tbl.to_pylist() if r["cell_id"] == 100]
+    assert cell_100[0]["n_modis"] == 1
+    assert cell_100[0]["phi_modis"] == 12.0
+    assert cell_100[0]["y_occ_modis"] == 1
+
     assert cell_100[0]["n_viirs"] == 2
     assert cell_100[0]["phi_viirs"] == 35.0
     assert cell_100[0]["phi_max_viirs"] == 25.0
-    assert cell_100[0]["y_occ"] == 1
+    assert cell_100[0]["y_occ_viirs"] == 1
 
     assert cell_100[1]["n_viirs"] == 0
+    assert cell_100[1]["phi_modis_3d"] == 12.0
     assert cell_100[1]["phi_viirs_3d"] == 35.0
     assert cell_100[2]["phi_viirs_3d"] == 35.0
 
