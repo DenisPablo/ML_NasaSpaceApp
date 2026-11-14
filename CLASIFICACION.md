@@ -47,7 +47,7 @@ porque la Fase 1 ya descarta esas filas. Sin él, esa regla queda apagada y se a
 | 6 | Días × satélite operativo (apagón ≠ cero fuego) | `counts.build_satelite_operativo` | `satelite_operativo` |
 | 7 | Conteos dispersos celda × día por satélite (INT16) | `counts.build_conteos` | `conteos_celda_dia/anio=…` |
 | 8 | Focos individuales con `foco_id` estable | `counts.build_focos` | `focos/anio=…` |
-| 9 | Factores jerárquicos provincia × mes (`modis` y `terra`) | `calibrate.fit_hierarchical` | `factores_provincia_mes` |
+| 9 | Factores jerárquicos provincia × mes (`modis` y `terra`) | `calibrate.fit_hierarchical` | `factores_provincia_mes` y `factores_region_mes` (niveles región y país del mismo ajuste) |
 | 10 | Rangos del 80 % (dejando un año afuera) | `calibrate.calibrate_ranges` | `rangos` |
 | 11 | Pruebas hacia atrás / adelante y cobertura | `calibrate.evaluate` | `validacion.json` |
 | 12 | Validar contrato y publicar de forma atómica (`current` → versión) | `publish` | `metadata.json` |

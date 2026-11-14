@@ -37,6 +37,10 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "provincia_id": "string", "mes": "int8", "tipo": "string", "factor": "float32",
         "nivel_origen": "string", "n_modis_calib": "int32", "factores_version": "string",
     },
+    "factores_region_mes": {
+        "region": "string", "mes": "int8", "tipo": "string", "factor": "float32",
+        "n_modis_calib": "int32", "factores_version": "string",
+    },
     "rangos": {"modis_min": "int32", "modis_max": "int32", "mult_bajo": "float32", "mult_alto": "float32"},
     "satelite_operativo": {"fecha": "date", "satelite": "string", "operativo": "bool", "n_nacional": "int32"},
     "puntos_industriales": {
@@ -116,6 +120,18 @@ def validate(tables: dict[str, pd.DataFrame], fecha_max: date) -> list[str]:
         lo, hi = C.FACTOR_BOUNDS.get(tipo, (0.5, 20.0))
         if not g["factor"].between(lo, hi, inclusive="neither").all():
             err.append(f"factores_provincia_mes[{tipo}]: factor fuera de ({lo}, {hi})")
+    freg = tables["factores_region_mes"]
+    reg_ids = set(C.PROVINCE_REGION.values()) | {C.NATIONAL_REGION}
+    if not set(freg["region"]).issubset(reg_ids):
+        err.append(f"factores_region_mes: regiones no válidas {sorted(set(freg['region']) - reg_ids)}")
+    for tipo, g in freg.groupby("tipo"):
+        if len(g) != len(reg_ids) * 12 or g.duplicated(["region", "mes"]).any():
+            err.append(f"factores_region_mes[{tipo}]: se esperaban {len(reg_ids)} × 12 filas únicas")
+        lo, hi = C.FACTOR_BOUNDS.get(tipo, (0.5, 20.0))
+        if not g["factor"].between(lo, hi, inclusive="neither").all():
+            err.append(f"factores_region_mes[{tipo}]: factor fuera de ({lo}, {hi})")
+    if set(freg["tipo"]) != set(fac["tipo"]):
+        err.append("factores_region_mes: los tipos no coinciden con factores_provincia_mes")
     if tables["rangos"][["mult_bajo", "mult_alto"]].isna().any().any():
         err.append("rangos: tramo sin datos suficientes")
     return err

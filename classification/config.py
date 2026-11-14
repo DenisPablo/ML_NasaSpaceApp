@@ -36,6 +36,7 @@ PROVINCE_REGION = {
     "26": "Patagonia", "58": "Patagonia", "62": "Patagonia", "78": "Patagonia", "94": "Patagonia",
 }
 LOW_DATA_PROVINCES = ("02", "78", "94")  # CABA, Santa Cruz, Tierra del Fuego
+NATIONAL_REGION = "Argentina"            # nivel país en factores_region_mes
 
 # --- Calibración --------------------------------------------------------------------------
 SHRINK_K = 200                       # "colchón" (focos MODIS)

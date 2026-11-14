@@ -31,6 +31,7 @@ from classification.calibrate import (
     calibrate_ranges,
     evaluate,
     factors_table,
+    region_factors_table,
     fit_hierarchical,
     monthly_counts,
     range_coverage,
@@ -110,6 +111,7 @@ def run(args: argparse.Namespace) -> int:
     fits = {"modis": fit_hierarchical(mm, args.k), "terra": fit_hierarchical(mt, args.k)}
     version = args.factores_version or f"{fecha_max:%Y.%m}-b1"
     factores = factors_table(fits, version)
+    factores_region = region_factors_table(fits, version)
     rangos_full = calibrate_ranges(mm, args.k)
     rangos = rangos_full.drop(columns=["n_meses"])
 
@@ -128,6 +130,7 @@ def run(args: argparse.Namespace) -> int:
         "dim_celdas": dim_celdas,
         "dim_provincias": dim_provincias,
         "factores_provincia_mes": factores,
+        "factores_region_mes": factores_region,
         "rangos": rangos,
         "satelite_operativo": oper,
         "puntos_industriales": puntos,
