@@ -29,6 +29,7 @@ from classification.counts import (
     default_fecha_max,
     exclude_static,
     normalize_satellite,
+    resolve_fecha_max,
     trim_to_missions,
 )
 from classification.geo import Province, assign_province, build_cell_mask, points_in_ring, provinces_table
@@ -207,6 +208,15 @@ def test_default_fecha_max_is_last_complete_day():
     assert default_fecha_max(real_today) < real_today
 
 
+def test_resolve_fecha_max_never_goes_past_last_complete_day():
+    today = date(2026, 11, 14)
+    data_max = date(2026, 11, 14)
+    assert resolve_fecha_max(data_max, None, today) == date(2026, 11, 13)
+    assert resolve_fecha_max(data_max, date(2027, 1, 1), today) == date(2026, 11, 13)  # futura
+    assert resolve_fecha_max(date(2026, 11, 10), date(2026, 11, 12), today) == date(2026, 11, 10)  # sin datos
+    assert resolve_fecha_max(data_max, date(2025, 12, 31), today) == date(2025, 12, 31)  # corte anterior
+
+
 # ---------------------------------------------------------------- calibración
 
 
@@ -379,3 +389,10 @@ def test_validate_rejects_dates_before_data_start():
 def test_metadata_schema_version_with_factores_region():
     meta = build_metadata(date(2000, 11, 1), date(2026, 11, 13), date(2026, 8, 31), "v", "abc")
     assert meta["schema_version"] == "1.1.0"
+
+
+def test_validate_rejects_future_fecha_max():
+    t = _valid_tables()
+    errs = validate(t, date(2020, 8, 2), today=date(2020, 8, 1))
+    assert any("fecha futura" in e for e in errs)
+    assert validate(t, date(2020, 8, 1), today=date(2020, 8, 1)) == []

@@ -70,6 +70,16 @@ def default_fecha_max(data_max: date, today: date | None = None) -> date:
     return min(data_max, today - timedelta(days=1))
 
 
+def resolve_fecha_max(data_max: date, pedida: date | None = None, today: date | None = None) -> date:
+    """``fecha_max`` a publicar: la pedida (``--fecha-max``), pero nunca después del último día completo.
+
+    Así un ``--fecha-max`` futuro o posterior a los datos no genera días vacíos en
+    ``satelite_operativo`` ni una ``fecha_max`` futura en ``metadata.json``.
+    """
+    limite = default_fecha_max(data_max, today)
+    return limite if pedida is None else min(pedida, limite)
+
+
 def exclude_static(det: pd.DataFrame, puntos: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """Quita los focos ubicados en puntos industriales. Devuelve (focos, cantidad excluida)."""
     if puntos.empty or det.empty:

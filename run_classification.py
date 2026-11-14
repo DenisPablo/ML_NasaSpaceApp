@@ -40,9 +40,9 @@ from classification.counts import (
     build_conteos,
     build_focos,
     build_satelite_operativo,
-    default_fecha_max,
     exclude_static,
     prepare_detections,
+    resolve_fecha_max,
     trim_to_missions,
 )
 from classification.geo import assign_province, build_cell_mask, load_provinces_geojson, provinces_table
@@ -83,11 +83,12 @@ def run(args: argparse.Namespace) -> int:
     del clean
     det, recorte = trim_to_missions(det)
     log("      recorte a la ventana de cada misión: " + ", ".join(f"{s} {n:,}" for s, n in recorte.items()))
-    if args.fecha_max is None:
-        fecha_max = default_fecha_max(max(det["fecha"]))
+    pedida = date.fromisoformat(args.fecha_max) if args.fecha_max else None
+    fecha_max = resolve_fecha_max(max(det["fecha"]), pedida)
+    if pedida is None:
         log(f"      fecha_max por defecto (último día completo): {fecha_max}")
-    else:
-        fecha_max = date.fromisoformat(args.fecha_max)
+    elif fecha_max != pedida:
+        log(f"      --fecha-max {pedida} es posterior al último día completo: se usa {fecha_max}")
     det = det[det["fecha"] <= fecha_max].reset_index(drop=True)
 
     log("[2/7] Provincias y máscara nacional de celdas")
@@ -175,8 +176,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--fecha-max",
         default=None,
-        help="Fecha local máxima a publicar (YYYY-MM-DD). Por defecto, el último día completo: "
-        "min(fecha máxima de los datos, ayer en hora local UTC−3).",
+        help="Fecha local máxima a publicar (YYYY-MM-DD). Nunca pasa del último día completo: "
+        "min(fecha máxima de los datos, ayer en hora local UTC−3), que es también el valor por defecto.",
     )
     p.add_argument("--factores-version", default=None)
     return p.parse_args(argv)

@@ -69,9 +69,12 @@ def conform(name: str, df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def validate(tables: dict[str, pd.DataFrame], fecha_max: date) -> list[str]:
+def validate(tables: dict[str, pd.DataFrame], fecha_max: date, today: date | None = None) -> list[str]:
     """Chequeos obligatorios de ``docs/02-contratos-de-datos.md`` (API). Devuelve la lista de errores."""
     err: list[str] = []
+    today = today or datetime.now(timezone(timedelta(hours=-3))).date()
+    if fecha_max > today:
+        err.append(f"fecha_max {fecha_max} es una fecha futura (hoy es {today} en UTC−3)")
     for name, schema in SCHEMAS.items():
         if name not in tables:
             err.append(f"{name}: tabla ausente")

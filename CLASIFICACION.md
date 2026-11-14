@@ -61,7 +61,7 @@ porque la Fase 1 ya descarta esas filas. Sin él, esa regla queda apagada y se a
 | Entrada MODIS | Terra + Aqua (`tipo = modis`); solo Terra antes del 2002-07-04 (`tipo = terra`, calibrado 2012–2019) |
 | Factor | `f_p,m = (V_p,m + K·f_región,m) / (M_p,m + K)`, con `K = 200` y cascada región → país-mes → país |
 | Provincias con pocos datos | CABA, Santa Cruz y Tierra del Fuego usan el factor de su región |
-| Bordes de la serie | Se descartan los focos con fecha local fuera de la misión de su satélite (p. ej. Terra 2000-11-01 UTC que cae el 2000-10-31 local). Sin `--fecha-max`, la serie termina en el último día completo: `min(fecha máxima de los datos, ayer en UTC−3)` |
+| Bordes de la serie | Se descartan los focos con fecha local fuera de la misión de su satélite (p. ej. Terra 2000-11-01 UTC que cae el 2000-10-31 local). La serie termina en el último día completo, `min(fecha máxima de los datos, ayer en UTC−3)`; un `--fecha-max` solo puede adelantar ese corte, nunca pasarlo |
 | Días válidos | Solo días en que todos los satélites involucrados tienen al menos un foco en el país |
 | Punto persistente | ≥ 30 días, ≥ 3 años y ≥ 6 meses con focos en la misma celda de ~1 km |
 | Punto industrial | nocturno ≥ 60 % y ≥ 10 meses · `type = 2` ≥ 30 % · nocturno ≥ 80 % y ≥ 5 años |
