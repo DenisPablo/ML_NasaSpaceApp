@@ -145,14 +145,8 @@ def run(args: argparse.Namespace) -> int:
         "satelite_operativo": oper,
         "puntos_industriales": puntos,
     }
-    from classification.publish import build_metadata, validate, write_all
+    from classification.publish import build_metadata, validate, validate_metadata, write_all
 
-    errors = validate(tables, fecha_max)
-    if errors:
-        log("ERROR: el contrato de datos no se cumple:\n  - " + "\n  - ".join(errors))
-        return 2
-
-    log(f"[7/7] Publicando en {args.out}")
     sp = det.loc[det["fuente"] == "SP", "fecha"]
     meta = build_metadata(
         fecha_min=min(det["fecha"]),
@@ -161,6 +155,12 @@ def run(args: argparse.Namespace) -> int:
         factores_version=version,
         pipeline_commit=git_commit(),
     )
+    errors = validate(tables, fecha_max) + validate_metadata(meta)
+    if errors:
+        log("ERROR: el contrato de datos no se cumple:\n  - " + "\n  - ".join(errors))
+        return 2
+
+    log(f"[7/7] Publicando en {args.out}")
     final = write_all(tables, meta, args.out, extra={"validacion.json": metrics})
     log(f"Listo: {final} (enlace {Path(args.out) / 'current'})")
     return 0

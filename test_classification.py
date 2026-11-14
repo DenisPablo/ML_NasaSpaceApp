@@ -33,7 +33,7 @@ from classification.counts import (
     trim_to_missions,
 )
 from classification.geo import Province, assign_province, build_cell_mask, points_in_ring, provinces_table
-from classification.publish import build_metadata, conform, validate
+from classification.publish import build_metadata, conform, validate, validate_metadata
 from classification.static_sources import detect_static_sources, point_bin
 
 # ---------------------------------------------------------------- geometría
@@ -396,3 +396,18 @@ def test_validate_rejects_future_fecha_max():
     errs = validate(t, date(2020, 8, 2), today=date(2020, 8, 1))
     assert any("fecha futura" in e for e in errs)
     assert validate(t, date(2020, 8, 1), today=date(2020, 8, 1)) == []
+
+
+def test_validate_metadata_requires_fecha_ultimo_sp_and_contract_fields():
+    ok = build_metadata(date(2000, 11, 1), date(2026, 11, 13), date(2026, 8, 31), "v", "abc")
+    assert validate_metadata(ok) == []
+    assert set(ok) == {
+        "schema_version", "data_version", "factores_version", "fecha_min", "fecha_max",
+        "fecha_ultimo_sp", "referencia_viirs", "fuentes", "pipeline_commit",
+    }
+    sin_sp = build_metadata(date(2000, 11, 1), date(2026, 11, 13), None, "v", "abc")
+    assert any("fecha_ultimo_sp" in e for e in validate_metadata(sin_sp))
+    temprana = build_metadata(date(2000, 10, 31), date(2026, 11, 13), date(2026, 8, 31), "v", "abc")
+    assert any("fecha_min" in e for e in validate_metadata(temprana))
+    ref = dict(ok, referencia_viirs=[{"satelite": "N21", "desde": "2023-03-01", "hasta": None}])
+    assert any("referencia_viirs" in e for e in validate_metadata(ref))

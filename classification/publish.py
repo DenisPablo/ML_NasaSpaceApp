@@ -166,6 +166,37 @@ def build_metadata(
     }
 
 
+METADATA_KEYS = (
+    "schema_version", "data_version", "factores_version", "fecha_min", "fecha_max",
+    "fecha_ultimo_sp", "referencia_viirs", "fuentes", "pipeline_commit",
+)
+
+
+def validate_metadata(meta: dict) -> list[str]:
+    """Chequeos de ``metadata.json`` (docs/02 §9). En la API, ``fecha_ultimo_sp`` es una fecha
+    obligatoria y ``referencia_viirs`` solo admite ``SNPP`` y ``N20``."""
+    err = [f"metadata.{k}: campo ausente" for k in METADATA_KEYS if k not in meta]
+    if err:
+        return err
+    for k in METADATA_KEYS:
+        if k != "pipeline_commit" and meta[k] in (None, "", []):
+            err.append(f"metadata.{k}: no puede ser nulo ni vacío")
+    if err:
+        return err
+    fmin, fmax = date.fromisoformat(meta["fecha_min"]), date.fromisoformat(meta["fecha_max"])
+    fsp = date.fromisoformat(meta["fecha_ultimo_sp"])
+    if fmin < C.DATA_START:
+        err.append(f"metadata.fecha_min {fmin} es anterior a {C.DATA_START}")
+    if not fmin <= fsp <= fmax:
+        err.append(f"metadata.fecha_ultimo_sp {fsp} fuera de [{fmin}, {fmax}]")
+    if meta["schema_version"] != C.SCHEMA_VERSION:
+        err.append(f"metadata.schema_version {meta['schema_version']} != {C.SCHEMA_VERSION}")
+    sats = {r.get("satelite") for r in meta["referencia_viirs"]}
+    if not sats <= {"SNPP", "N20"}:
+        err.append(f"metadata.referencia_viirs: satélites no válidos {sorted(sats - {'SNPP', 'N20'})}")
+    return err
+
+
 def write_all(tables: dict[str, pd.DataFrame], metadata: dict, out_root: Path, extra: dict[str, dict] | None = None) -> Path:
     """Escribe en ``out_root/<data_version>/`` y apunta ``out_root/current`` a esa versión."""
     import pyarrow as pa
