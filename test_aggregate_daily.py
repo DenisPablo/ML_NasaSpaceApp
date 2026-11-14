@@ -31,6 +31,7 @@ def _make_clean_row(cell_id: int, fecha: date, frp: float, scan: float, acq_time
         "confidence": "n",
         "satellite": "SNPP",
         "instrument": "SNPP",
+        "sensor_family": "VIIRS",
         "version": "2",
         "daynight": "D",
         "type": 0,

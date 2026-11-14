@@ -58,6 +58,7 @@ OUTPUT_SCHEMA = pa.schema(
         ("confidence", pa.string()),
         ("satellite", pa.string()),
         ("instrument", pa.string()),
+        ("sensor_family", pa.string()),
         ("version", pa.string()),
         ("daynight", pa.string()),
         ("type", pa.int8()),
@@ -138,6 +139,13 @@ def infer_source_quality(filename: str) -> str:
     """Classify FIRMS file as 'NRT' or 'SP' based on filename."""
     lower = filename.lower()
     return "NRT" if "nrt" in lower else "SP"
+
+
+def infer_sensor_family(instrument_col: pa.Array) -> pa.Array:
+    """Normalize instrument column ('MODIS', 'VIIRS', 'SNPP') to 'MODIS' or 'VIIRS'."""
+    inst_upper = pc.utf8_upper(pc.utf8_trim_whitespace(pc.cast(instrument_col, pa.string())))
+    is_modis = pc.fill_null(pc.equal(inst_upper, "MODIS"), False)
+    return pc.if_else(is_modis, "MODIS", "VIIRS")
 
 
 def build_confidence_mask(conf_col: pa.Array) -> pa.Array:
@@ -301,6 +309,7 @@ def clean_batch(
             "confidence": pc.utf8_lower(pc.cast(filtered["confidence"], pa.string())),
             "satellite": pc.cast(filtered["satellite"], pa.string()),
             "instrument": pc.cast(filtered["instrument"], pa.string()),
+            "sensor_family": infer_sensor_family(filtered["instrument"]),
             "version": pc.cast(filtered["version"], pa.string()),
             "daynight": pc.cast(filtered["daynight"], pa.string()),
             "type": type_arr,
@@ -357,8 +366,8 @@ def deduplicate_to_parquet(staged_parquet: Path, output_parquet: Path) -> int:
 
 
 def discover_csv_files(input_dir: Path) -> list[Path]:
-    """Return sorted FIRMS CSV files with archive (SP) processed before NRT."""
-    files = sorted(input_dir.glob("*.csv"))
+    """Recursively return sorted FIRMS CSV files with archive (SP) processed before NRT."""
+    files = sorted(input_dir.rglob("*.csv"))
     return sorted(files, key=lambda p: (0 if infer_source_quality(p.name) == "SP" else 1, p.name))
 
 
@@ -468,13 +477,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("DL_FIRE_SV-C2_847884"),
-        help="Carpeta con archivos CSV de FIRMS.",
+        default=Path("Data-Argentina"),
+        help="Carpeta raiz con archivos CSV de FIRMS (busqueda recursiva).",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/clean/viirs_snpp_san_luis_clean.parquet"),
+        default=Path("data/clean/firms_san_luis_clean.parquet"),
         help="Ruta del archivo Parquet de salida.",
     )
     parser.add_argument(

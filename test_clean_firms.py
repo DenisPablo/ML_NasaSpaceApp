@@ -107,3 +107,49 @@ def test_cleaning_rules_utc_rollover_filters_dedup_and_progress(tmp_path: Path) 
     assert pcts, "Expected percentage output in progress stream"
     assert pcts == sorted(pcts)
     assert pcts[-1] == 100.0
+
+
+def test_recursive_multisensor_modis_and_viirs_n20(tmp_path: Path) -> None:
+    root = tmp_path / "Data-Argentina"
+    modis_dir = root / "DL_FIRE_M-C61_test"
+    viirs_dir = root / "DL_FIRE_J1V-C2_test"
+    modis_dir.mkdir(parents=True)
+    viirs_dir.mkdir(parents=True)
+    output_parquet = tmp_path / "out" / "multisensor.parquet"
+
+    header = [
+        "latitude", "longitude", "brightness", "scan", "track",
+        "acq_date", "acq_time", "satellite", "instrument",
+        "confidence", "version", "bright_t31", "frp", "daynight", "type",
+    ]
+    _write_csv(
+        modis_dir / "fire_archive_M-C61_test.csv",
+        header,
+        [
+            # Kept: MODIS numeric confidence 55 >= 30
+            ["-33.30", "-66.33", "310.0", "1.2", "1.1", "2005-08-10", "1400", "Terra", "MODIS", "55", "6.03", "290.0", "18.5", "D", "0"],
+            # Dropped: MODIS numeric confidence 20 < 30
+            ["-33.31", "-66.34", "305.0", "1.2", "1.1", "2005-08-10", "1400", "Terra", "MODIS", "20", "6.03", "290.0", "12.0", "D", "0"],
+        ],
+    )
+    _write_csv(
+        viirs_dir / "fire_archive_J1V-C2_test.csv",
+        header,
+        [
+            # Kept: NOAA-20 VIIRS
+            ["-33.35", "-66.30", "325.0", "0.4", "0.4", "2020-09-01", "1600", "N20", "VIIRS", "h", "2", "292.0", "4.2", "D", "0"],
+        ],
+    )
+
+    stats = run_cleaning_pipeline(
+        input_dir=root,
+        output_parquet=output_parquet,
+        region="san_luis",
+        progress_factory=lambda total: ProgressTracker(total, stream=io.StringIO(), is_tty=False),
+    )
+
+    assert stats.files_processed == 2
+    assert stats.rows_deduped == 2
+    rows = pq.read_table(output_parquet).to_pylist()
+    assert [r["sensor_family"] for r in rows] == ["MODIS", "VIIRS"]
+    assert [r["satellite"] for r in rows] == ["Terra", "N20"]
