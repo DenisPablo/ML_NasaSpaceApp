@@ -79,7 +79,7 @@ def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -
     assert tbl.schema.field("phi_viirs_7d").type == pa.float32()
     assert tbl.schema.field("n_viirs").type == pa.int32()
 
-    cell_100 = [r for r in tbl.to_pylist() if r["cell_id"] == 100]
+    cell_100 = sorted((r for r in tbl.to_pylist() if r["cell_id"] == 100), key=lambda r: r["fecha"])
     assert cell_100[0]["n_modis"] == 1
     assert cell_100[0]["phi_modis"] == 12.0
     assert cell_100[0]["y_occ_modis"] == 1
@@ -124,7 +124,7 @@ def test_yearly_partitioned_output_preserves_cross_year_rolling_windows(tmp_path
     assert (out_dir / "year=2023" / "data.parquet").exists()
     assert (out_dir / "year=2024" / "data.parquet").exists()
 
-    y2024 = pq.read_table(out_dir / "year=2024" / "data.parquet").to_pylist()
+    y2024 = sorted(pq.read_table(out_dir / "year=2024" / "data.parquet").to_pylist(), key=lambda r: r["fecha"])
     assert [r["fecha"] for r in y2024] == [date(2024, 1, 1), date(2024, 1, 2)]
     # Jan 1 sees Dec 30 inside 3d window; Jan 2 sees Dec 30 inside 7d window
     assert y2024[0]["phi_viirs_3d"] == 15.0

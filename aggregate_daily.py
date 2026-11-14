@@ -53,7 +53,7 @@ def build_daily_aggregation_sql(
     return f"""
     WITH {cells_cte}calendario AS (
         SELECT UNNEST(
-            GENERATE_SERIES(DATE '{start_date.isoformat()}', DATE '{end_date.isoformat()}', INTERVAL 1 DAY)
+            GENERATE_SERIES(DATE '{out_start.isoformat()}', DATE '{out_end.isoformat()}', INTERVAL 1 DAY)
         )::DATE AS fecha
     ),
     grilla_base AS (
@@ -79,64 +79,70 @@ def build_daily_aggregation_sql(
         WHERE fecha_local BETWEEN DATE '{start_date.isoformat()}' AND DATE '{end_date.isoformat()}'
         GROUP BY cell_id, fecha_local
     ),
-    imputado AS (
-        SELECT
-            g.cell_id,
-            g.fecha,
-            COALESCE(f.n_modis, 0)::INT32 AS n_modis,
-            COALESCE(f.phi_modis, 0.0)::FLOAT AS phi_modis,
-            COALESCE(f.phi_max_modis, 0.0)::FLOAT AS phi_max_modis,
-            f.scan_bar_modis::FLOAT AS scan_bar_modis,
-            f.track_bar_modis::FLOAT AS track_bar_modis,
-            CASE WHEN COALESCE(f.n_modis, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_modis,
-            COALESCE(f.n_viirs, 0)::INT32 AS n_viirs,
-            COALESCE(f.phi_viirs, 0.0)::FLOAT AS phi_viirs,
-            COALESCE(f.phi_max_viirs, 0.0)::FLOAT AS phi_max_viirs,
-            f.scan_bar_viirs::FLOAT AS scan_bar_viirs,
-            f.track_bar_viirs::FLOAT AS track_bar_viirs,
-            CASE WHEN COALESCE(f.n_viirs, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_viirs
-        FROM grilla_base g
-        LEFT JOIN firms_diario f
-            ON g.cell_id = f.cell_id AND g.fecha = f.fecha
+    lags AS (
+        SELECT UNNEST(GENERATE_SERIES(0, 29))::INT32 AS d
     ),
-    ventanas AS (
+    ventanas_activas AS (
         SELECT
-            cell_id,
-            fecha,
-            n_modis,
-            phi_modis,
-            phi_max_modis,
-            scan_bar_modis,
-            track_bar_modis,
-            y_occ_modis,
-            SUM(n_modis) OVER w3::INT32 AS n_modis_3d,
-            SUM(n_modis) OVER w7::INT32 AS n_modis_7d,
-            SUM(n_modis) OVER w30::INT32 AS n_modis_30d,
-            SUM(phi_modis) OVER w3::FLOAT AS phi_modis_3d,
-            SUM(phi_modis) OVER w7::FLOAT AS phi_modis_7d,
-            SUM(phi_modis) OVER w30::FLOAT AS phi_modis_30d,
-            n_viirs,
-            phi_viirs,
-            phi_max_viirs,
-            scan_bar_viirs,
-            track_bar_viirs,
-            y_occ_viirs,
-            SUM(n_viirs) OVER w3::INT32 AS n_viirs_3d,
-            SUM(n_viirs) OVER w7::INT32 AS n_viirs_7d,
-            SUM(n_viirs) OVER w30::INT32 AS n_viirs_30d,
-            SUM(phi_viirs) OVER w3::FLOAT AS phi_viirs_3d,
-            SUM(phi_viirs) OVER w7::FLOAT AS phi_viirs_7d,
-            SUM(phi_viirs) OVER w30::FLOAT AS phi_viirs_30d
-        FROM imputado
-        WINDOW
-            w3 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
-            w7 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW),
-            w30 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)
+            f.cell_id,
+            (f.fecha + l.d * INTERVAL '1 day')::DATE AS fecha,
+            SUM(f.n_modis) FILTER (WHERE l.d = 0)::INT32 AS n_modis,
+            SUM(f.phi_modis) FILTER (WHERE l.d = 0)::FLOAT AS phi_modis,
+            MAX(f.phi_max_modis) FILTER (WHERE l.d = 0)::FLOAT AS phi_max_modis,
+            MAX(f.scan_bar_modis) FILTER (WHERE l.d = 0)::FLOAT AS scan_bar_modis,
+            MAX(f.track_bar_modis) FILTER (WHERE l.d = 0)::FLOAT AS track_bar_modis,
+            SUM(f.n_modis) FILTER (WHERE l.d <= 2)::INT32 AS n_modis_3d,
+            SUM(f.n_modis) FILTER (WHERE l.d <= 6)::INT32 AS n_modis_7d,
+            SUM(f.n_modis)::INT32 AS n_modis_30d,
+            SUM(f.phi_modis) FILTER (WHERE l.d <= 2)::FLOAT AS phi_modis_3d,
+            SUM(f.phi_modis) FILTER (WHERE l.d <= 6)::FLOAT AS phi_modis_7d,
+            SUM(f.phi_modis)::FLOAT AS phi_modis_30d,
+            SUM(f.n_viirs) FILTER (WHERE l.d = 0)::INT32 AS n_viirs,
+            SUM(f.phi_viirs) FILTER (WHERE l.d = 0)::FLOAT AS phi_viirs,
+            MAX(f.phi_max_viirs) FILTER (WHERE l.d = 0)::FLOAT AS phi_max_viirs,
+            MAX(f.scan_bar_viirs) FILTER (WHERE l.d = 0)::FLOAT AS scan_bar_viirs,
+            MAX(f.track_bar_viirs) FILTER (WHERE l.d = 0)::FLOAT AS track_bar_viirs,
+            SUM(f.n_viirs) FILTER (WHERE l.d <= 2)::INT32 AS n_viirs_3d,
+            SUM(f.n_viirs) FILTER (WHERE l.d <= 6)::INT32 AS n_viirs_7d,
+            SUM(f.n_viirs)::INT32 AS n_viirs_30d,
+            SUM(f.phi_viirs) FILTER (WHERE l.d <= 2)::FLOAT AS phi_viirs_3d,
+            SUM(f.phi_viirs) FILTER (WHERE l.d <= 6)::FLOAT AS phi_viirs_7d,
+            SUM(f.phi_viirs)::FLOAT AS phi_viirs_30d
+        FROM firms_diario f
+        CROSS JOIN lags l
+        WHERE (f.fecha + l.d * INTERVAL '1 day')::DATE BETWEEN DATE '{out_start.isoformat()}' AND DATE '{out_end.isoformat()}'
+        GROUP BY f.cell_id, (f.fecha + l.d * INTERVAL '1 day')::DATE
     )
-    SELECT *
-    FROM ventanas
-    WHERE fecha BETWEEN DATE '{out_start.isoformat()}' AND DATE '{out_end.isoformat()}'
-    ORDER BY cell_id, fecha
+    SELECT
+        g.cell_id,
+        g.fecha,
+        COALESCE(v.n_modis, 0)::INT32 AS n_modis,
+        COALESCE(v.phi_modis, 0.0)::FLOAT AS phi_modis,
+        COALESCE(v.phi_max_modis, 0.0)::FLOAT AS phi_max_modis,
+        v.scan_bar_modis::FLOAT AS scan_bar_modis,
+        v.track_bar_modis::FLOAT AS track_bar_modis,
+        CASE WHEN COALESCE(v.n_modis, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_modis,
+        COALESCE(v.n_modis_3d, 0)::INT32 AS n_modis_3d,
+        COALESCE(v.n_modis_7d, 0)::INT32 AS n_modis_7d,
+        COALESCE(v.n_modis_30d, 0)::INT32 AS n_modis_30d,
+        COALESCE(v.phi_modis_3d, 0.0)::FLOAT AS phi_modis_3d,
+        COALESCE(v.phi_modis_7d, 0.0)::FLOAT AS phi_modis_7d,
+        COALESCE(v.phi_modis_30d, 0.0)::FLOAT AS phi_modis_30d,
+        COALESCE(v.n_viirs, 0)::INT32 AS n_viirs,
+        COALESCE(v.phi_viirs, 0.0)::FLOAT AS phi_viirs,
+        COALESCE(v.phi_max_viirs, 0.0)::FLOAT AS phi_max_viirs,
+        v.scan_bar_viirs::FLOAT AS scan_bar_viirs,
+        v.track_bar_viirs::FLOAT AS track_bar_viirs,
+        CASE WHEN COALESCE(v.n_viirs, 0) > 0 THEN 1::TINYINT ELSE 0::TINYINT END AS y_occ_viirs,
+        COALESCE(v.n_viirs_3d, 0)::INT32 AS n_viirs_3d,
+        COALESCE(v.n_viirs_7d, 0)::INT32 AS n_viirs_7d,
+        COALESCE(v.n_viirs_30d, 0)::INT32 AS n_viirs_30d,
+        COALESCE(v.phi_viirs_3d, 0.0)::FLOAT AS phi_viirs_3d,
+        COALESCE(v.phi_viirs_7d, 0.0)::FLOAT AS phi_viirs_7d,
+        COALESCE(v.phi_viirs_30d, 0.0)::FLOAT AS phi_viirs_30d
+    FROM grilla_base g
+    LEFT JOIN ventanas_activas v
+        ON g.cell_id = v.cell_id AND g.fecha = v.fecha
     """
 
 
