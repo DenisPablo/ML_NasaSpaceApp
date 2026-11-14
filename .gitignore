@@ -11,3 +11,7 @@ data/
 models/
 *.csv
 *.parquet
+
+# Excepción: versión publicada de la clasificación (Propuesta B) para el backend
+!serving_api/
+!serving_api/**

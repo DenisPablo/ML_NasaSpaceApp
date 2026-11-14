@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "data_version": "2026-11-14T17:13:26-03:00",
+  "factores_version": "2026.11-b1",
+  "fecha_min": "2000-10-31",
+  "fecha_max": "2026-11-14",
+  "fecha_ultimo_sp": "2026-08-31",
+  "referencia_viirs": [
+    {
+      "satelite": "SNPP",
+      "desde": "2012-01-20",
+      "hasta": "2026-11-02"
+    },
+    {
+      "satelite": "N20",
+      "desde": "2026-11-03",
+      "hasta": null
+    }
+  ],
+  "fuentes": [
+    "NASA FIRMS MODIS C6.1",
+    "NASA FIRMS VIIRS 375m",
+    "IGN via API Georef"
+  ],
+  "pipeline_commit": "14c33b4"
+}
