@@ -60,6 +60,7 @@ porque la Fase 1 ya descarta esas filas. Sin él, esa regla queda apagada y se a
 | Entrada MODIS | Terra + Aqua (`tipo = modis`); solo Terra antes del 2002-07-04 (`tipo = terra`, calibrado 2012–2019) |
 | Factor | `f_p,m = (V_p,m + K·f_región,m) / (M_p,m + K)`, con `K = 200` y cascada región → país-mes → país |
 | Provincias con pocos datos | CABA, Santa Cruz y Tierra del Fuego usan el factor de su región |
+| Días publicados | Desde el **2000-11-01** (`DATA_START`); se descartan focos del 31/10 que deja la conversión a hora local |
 | Días válidos | Solo días en que todos los satélites involucrados tienen al menos un foco en el país |
 | Punto persistente | ≥ 30 días, ≥ 3 años y ≥ 6 meses con focos en la misma celda de ~1 km |
 | Punto industrial | nocturno ≥ 60 % y ≥ 10 meses · `type = 2` ≥ 30 % · nocturno ≥ 80 % y ≥ 5 años |

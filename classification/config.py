@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
-SCHEMA_VERSION = "1.0.0"
+# 1.1.0: se agrega factores_region_mes (docs/02 §5.1 de la API).
+SCHEMA_VERSION = "1.1.0"
 
 # --- Satélites -----------------------------------------------------------------------
 MODIS_SATS = ("Terra", "Aqua")
@@ -21,6 +22,10 @@ MISSION_START = {
     "N21": date(2023, 3, 1),
 }
 MISSION_END = {"SNPP": date(2026, 11, 2)}
+
+# Primer día publicado (docs/04 de la API: antes del 2000-11-01 no hay datos). La conversión
+# a hora local puede dejar focos del 31/10; se descartan.
+DATA_START = MISSION_START["Terra"]
 
 # Referencia VIIRS "observado": un solo satélite por fecha (nunca se suma NOAA-21)
 VIIRS_START = date(2012, 1, 20)

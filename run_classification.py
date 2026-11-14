@@ -80,7 +80,7 @@ def run(args: argparse.Namespace) -> int:
     det = prepare_detections(clean)
     del clean
     fecha_max = max(det["fecha"]) if args.fecha_max is None else date.fromisoformat(args.fecha_max)
-    det = det[det["fecha"] <= fecha_max]
+    det = det[(det["fecha"] >= C.DATA_START) & (det["fecha"] <= fecha_max)]
 
     log("[2/7] Provincias y máscara nacional de celdas")
     from classification.geo import make_albers_transforms

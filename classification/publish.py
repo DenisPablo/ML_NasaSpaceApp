@@ -91,6 +91,8 @@ def validate(tables: dict[str, pd.DataFrame], fecha_max: date) -> list[str]:
         f = pd.to_datetime(tables[name]["fecha"])
         if len(f) and f.max().date() > fecha_max:
             err.append(f"{name}: hay fechas posteriores a fecha_max {fecha_max}")
+        if len(f) and f.min().date() < C.DATA_START:
+            err.append(f"{name}: hay fechas anteriores a {C.DATA_START} (inicio de los datos)")
     for name in ("focos", "conteos_celda_dia"):
         bad = set(tables[name]["satelite"]) - set(C.ALL_SATS) if "satelite" in tables[name] else set()
         if bad:

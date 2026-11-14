@@ -29,7 +29,7 @@ from classification.counts import (
     normalize_satellite,
 )
 from classification.geo import Province, assign_province, build_cell_mask, points_in_ring, provinces_table
-from classification.publish import conform, validate
+from classification.publish import build_metadata, conform, validate
 from classification.static_sources import detect_static_sources, point_bin
 
 # ---------------------------------------------------------------- geometría
@@ -330,3 +330,20 @@ def test_validate_detects_contract_violations():
     t2 = _valid_tables()
     del t2["rangos"]
     assert validate(t2, date(2020, 8, 1)) == ["rangos: tabla ausente"]
+
+
+def test_validate_rejects_dates_before_data_start():
+    # docs/04 (API): antes del 2000-11-01 no hay datos. Un foco del 31/10 en hora local
+    # (madrugada del 1/11 en UTC) no debe publicarse.
+    t = _valid_tables()
+    t["focos"].loc[0, "fecha"] = date(2000, 10, 31)
+    t["conteos_celda_dia"].loc[0, "fecha"] = date(2000, 10, 31)
+    errs = validate(t, date(2020, 8, 1))
+    assert any("focos: hay fechas anteriores a" in e for e in errs)
+    assert any("conteos_celda_dia: hay fechas anteriores a" in e for e in errs)
+
+
+def test_metadata_schema_version_with_factores_region():
+    meta = build_metadata(date(2000, 11, 1), date(2026, 11, 13), date(2026, 8, 31), "v", "abc")
+    assert meta["schema_version"] == "1.1.0"
+    assert meta["fecha_min"] == "2000-11-01"
