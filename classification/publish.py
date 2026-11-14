@@ -69,9 +69,12 @@ def conform(name: str, df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def validate(tables: dict[str, pd.DataFrame], fecha_max: date) -> list[str]:
+def validate(tables: dict[str, pd.DataFrame], fecha_max: date, today: date | None = None) -> list[str]:
     """Chequeos obligatorios de ``docs/02-contratos-de-datos.md`` (API). Devuelve la lista de errores."""
     err: list[str] = []
+    today = today or datetime.now(timezone(timedelta(hours=-3))).date()
+    if fecha_max > today:
+        err.append(f"fecha_max {fecha_max} es una fecha futura (hoy es {today} en UTC−3)")
     for name, schema in SCHEMAS.items():
         if name not in tables:
             err.append(f"{name}: tabla ausente")
@@ -91,6 +94,8 @@ def validate(tables: dict[str, pd.DataFrame], fecha_max: date) -> list[str]:
         f = pd.to_datetime(tables[name]["fecha"])
         if len(f) and f.max().date() > fecha_max:
             err.append(f"{name}: hay fechas posteriores a fecha_max {fecha_max}")
+        if len(f) and f.min().date() < C.DATA_START:
+            err.append(f"{name}: hay fechas anteriores a {C.DATA_START} (inicio de los datos)")
     for name in ("focos", "conteos_celda_dia"):
         bad = set(tables[name]["satelite"]) - set(C.ALL_SATS) if "satelite" in tables[name] else set()
         if bad:
@@ -159,6 +164,78 @@ def build_metadata(
         "fuentes": ["NASA FIRMS MODIS C6.1", "NASA FIRMS VIIRS 375m", "IGN via API Georef"],
         "pipeline_commit": pipeline_commit,
     }
+
+
+def partition_row_counts(version_dir: Path) -> dict[str, dict[int, int]]:
+    """Filas por ``anio`` de las tablas particionadas de una versión publicada (solo metadatos Parquet)."""
+    import pyarrow.parquet as pq
+
+    out: dict[str, dict[int, int]] = {}
+    for name in sorted(PARTITIONED):
+        counts: dict[int, int] = {}
+        for part in sorted(Path(version_dir).glob(f"{name}/anio=*/*.parquet")):
+            anio = int(part.parent.name.split("=", 1)[1])
+            counts[anio] = counts.get(anio, 0) + pq.ParquetFile(part).metadata.num_rows
+        out[name] = counts
+    return out
+
+
+def volume_check(
+    tables: dict[str, pd.DataFrame],
+    previous: dict[str, dict[int, int]],
+    fecha_max: date,
+    tolerance: float = C.VOLUME_TOLERANCE,
+) -> tuple[list[str], dict]:
+    """Compara filas por año cerrado (``anio < año de fecha_max``) con la versión anterior.
+
+    Devuelve (errores, resumen). Un año cerrado que estaba y desapareció también es error.
+    """
+    err: list[str] = []
+    resumen: dict = {"tolerancia_pct": 100 * tolerance, "max_diferencia_pct": 0.0, "anios_comparados": 0}
+    for name in sorted(PARTITIONED):
+        prev = previous.get(name, {})
+        new = tables[name]["anio"].astype(int).value_counts().to_dict() if len(tables[name]) else {}
+        for anio in sorted(a for a in set(prev) | set(new) if a < fecha_max.year):
+            p, n = prev.get(anio, 0), new.get(anio, 0)
+            if p == 0:
+                continue  # año nuevo en el histórico: no hay contra qué comparar
+            diff = abs(n - p) / p
+            resumen["anios_comparados"] += 1
+            resumen["max_diferencia_pct"] = max(resumen["max_diferencia_pct"], round(100 * diff, 3))
+            if diff >= tolerance:
+                err.append(f"{name}[anio={anio}]: {n:,} filas vs {p:,} en la versión anterior ({100 * diff:+.1f} %)")
+    return err, resumen
+
+
+METADATA_KEYS = (
+    "schema_version", "data_version", "factores_version", "fecha_min", "fecha_max",
+    "fecha_ultimo_sp", "referencia_viirs", "fuentes", "pipeline_commit",
+)
+
+
+def validate_metadata(meta: dict) -> list[str]:
+    """Chequeos de ``metadata.json`` (docs/02 §9). En la API, ``fecha_ultimo_sp`` es una fecha
+    obligatoria y ``referencia_viirs`` solo admite ``SNPP`` y ``N20``."""
+    err = [f"metadata.{k}: campo ausente" for k in METADATA_KEYS if k not in meta]
+    if err:
+        return err
+    for k in METADATA_KEYS:
+        if k != "pipeline_commit" and meta[k] in (None, "", []):
+            err.append(f"metadata.{k}: no puede ser nulo ni vacío")
+    if err:
+        return err
+    fmin, fmax = date.fromisoformat(meta["fecha_min"]), date.fromisoformat(meta["fecha_max"])
+    fsp = date.fromisoformat(meta["fecha_ultimo_sp"])
+    if fmin < C.DATA_START:
+        err.append(f"metadata.fecha_min {fmin} es anterior a {C.DATA_START}")
+    if not fmin <= fsp <= fmax:
+        err.append(f"metadata.fecha_ultimo_sp {fsp} fuera de [{fmin}, {fmax}]")
+    if meta["schema_version"] != C.SCHEMA_VERSION:
+        err.append(f"metadata.schema_version {meta['schema_version']} != {C.SCHEMA_VERSION}")
+    sats = {r.get("satelite") for r in meta["referencia_viirs"]}
+    if not sats <= {"SNPP", "N20"}:
+        err.append(f"metadata.referencia_viirs: satélites no válidos {sorted(sats - {'SNPP', 'N20'})}")
+    return err
 
 
 def write_all(tables: dict[str, pd.DataFrame], metadata: dict, out_root: Path, extra: dict[str, dict] | None = None) -> Path:

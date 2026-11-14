@@ -91,5 +91,11 @@
     "focos": 6201450,
     "conteos_celda_dia": 1890033,
     "dim_celdas": 112711
+  },
+  "volumen": {
+    "tolerancia_pct": 5.0,
+    "max_diferencia_pct": 0.0,
+    "anios_comparados": 52,
+    "version_anterior": "20261114T173321"
   }
 }

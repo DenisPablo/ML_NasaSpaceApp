@@ -56,9 +56,10 @@ python run_classification.py \
 | `--provinces-geojson` | Sí | Límites provinciales del IGN |
 | `--raw-dir` | Recomendada | CSV crudos: activa la regla "marcado industrial por FIRMS" (`type = 2`) |
 | `--out` | No (`data/serving_api`) | Carpeta de salida |
-| `--fecha-max` | No (último día completo) | Cortar en una fecha (`YYYY-MM-DD`). Sin la opción se usa `min(fecha máxima de los datos, ayer en hora local UTC−3)`, para no publicar el día de la corrida, que tiene datos NRT parciales. Si se pasa, se respeta tal cual |
+| `--fecha-max` | No (último día completo) | Cortar en una fecha (`YYYY-MM-DD`). Sin la opción se usa `min(fecha máxima de los datos, ayer en hora local UTC−3)`, para no publicar el día de la corrida, que tiene datos NRT parciales. Si se pasa una fecha posterior a ese día, se usa ese día igual (nunca se publican fechas futuras ni el día en curso) |
 | `--k` | No (`200`) | Colchón de los factores; no cambiar sin recalibrar |
 | `--factores-version` | No (`AAAA.MM-b1`) | Etiqueta de la tabla de factores |
+| `--permitir-cambio-volumen` | No | Publicar aunque un año cerrado cambie 5 % o más de filas respecto de la versión en `current` (por ejemplo, al cambiar la lista de puntos industriales). Queda registrado en `validacion.json` (`volumen.cambios_aceptados`) |
 
 ### Qué tiene que mostrar el log
 
@@ -233,4 +234,5 @@ docker run -p 8000:8000 \
 | Código 2: `factor fuera de (…)` | Datos incompletos para algún período | Revisar que estén los archivos `archive` (SP) de los 4 productos |
 | Código 2: `cell_id fuera de dim_celdas` | GeoJSON de provincias distinto o recortado | Volver a bajarlo de la API Georef |
 | Muy pocos puntos industriales | Falta `--raw-dir` | Agregarlo apuntando a `Data-Argentina` |
+| Código 2: `focos[anio=…]: … filas vs … en la versión anterior` | Un año cerrado cambió 5 % o más respecto de la versión en `current` (docs/02, validación de volumen) | Revisar la causa (datos incompletos, otro GeoJSON, otra lista de puntos industriales). Si el cambio es esperado, volver a correr con `--permitir-cambio-volumen` |
 | Memoria insuficiente | Menos de 4 GB libres | Cerrar programas o usar `--fecha-max` para probar con un período menor |

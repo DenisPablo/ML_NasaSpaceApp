@@ -40,9 +40,9 @@ from classification.counts import (
     build_conteos,
     build_focos,
     build_satelite_operativo,
-    default_fecha_max,
     exclude_static,
     prepare_detections,
+    resolve_fecha_max,
     trim_to_missions,
 )
 from classification.geo import assign_province, build_cell_mask, load_provinces_geojson, provinces_table
@@ -83,11 +83,12 @@ def run(args: argparse.Namespace) -> int:
     del clean
     det, recorte = trim_to_missions(det)
     log("      recorte a la ventana de cada misión: " + ", ".join(f"{s} {n:,}" for s, n in recorte.items()))
-    if args.fecha_max is None:
-        fecha_max = default_fecha_max(max(det["fecha"]))
+    pedida = date.fromisoformat(args.fecha_max) if args.fecha_max else None
+    fecha_max = resolve_fecha_max(max(det["fecha"]), pedida)
+    if pedida is None:
         log(f"      fecha_max por defecto (último día completo): {fecha_max}")
-    else:
-        fecha_max = date.fromisoformat(args.fecha_max)
+    elif fecha_max != pedida:
+        log(f"      --fecha-max {pedida} es posterior al último día completo: se usa {fecha_max}")
     det = det[det["fecha"] <= fecha_max].reset_index(drop=True)
 
     log("[2/7] Provincias y máscara nacional de celdas")
@@ -144,14 +145,15 @@ def run(args: argparse.Namespace) -> int:
         "satelite_operativo": oper,
         "puntos_industriales": puntos,
     }
-    from classification.publish import build_metadata, validate, write_all
+    from classification.publish import (
+        build_metadata,
+        partition_row_counts,
+        validate,
+        validate_metadata,
+        volume_check,
+        write_all,
+    )
 
-    errors = validate(tables, fecha_max)
-    if errors:
-        log("ERROR: el contrato de datos no se cumple:\n  - " + "\n  - ".join(errors))
-        return 2
-
-    log(f"[7/7] Publicando en {args.out}")
     sp = det.loc[det["fuente"] == "SP", "fecha"]
     meta = build_metadata(
         fecha_min=min(det["fecha"]),
@@ -160,6 +162,25 @@ def run(args: argparse.Namespace) -> int:
         factores_version=version,
         pipeline_commit=git_commit(),
     )
+    errors = validate(tables, fecha_max) + validate_metadata(meta)
+    prev_dir = Path(args.out) / "current"
+    if prev_dir.exists():
+        vol_err, metrics["volumen"] = volume_check(tables, partition_row_counts(prev_dir), fecha_max)
+        metrics["volumen"]["version_anterior"] = prev_dir.resolve().name
+        log(f"      volumen vs {prev_dir.resolve().name}: diferencia máxima {metrics['volumen']['max_diferencia_pct']} % "
+            f"en {metrics['volumen']['anios_comparados']} años cerrados")
+        if vol_err and args.permitir_cambio_volumen:
+            log("      AVISO (--permitir-cambio-volumen): " + "; ".join(vol_err))
+            metrics["volumen"]["cambios_aceptados"] = vol_err
+        else:
+            errors += vol_err
+    else:
+        log("      sin versión anterior en --out: se omite el control de volumen")
+    if errors:
+        log("ERROR: el contrato de datos no se cumple:\n  - " + "\n  - ".join(errors))
+        return 2
+
+    log(f"[7/7] Publicando en {args.out}")
     final = write_all(tables, meta, args.out, extra={"validacion.json": metrics})
     log(f"Listo: {final} (enlace {Path(args.out) / 'current'})")
     return 0
@@ -175,10 +196,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--fecha-max",
         default=None,
-        help="Fecha local máxima a publicar (YYYY-MM-DD). Por defecto, el último día completo: "
-        "min(fecha máxima de los datos, ayer en hora local UTC−3).",
+        help="Fecha local máxima a publicar (YYYY-MM-DD). Nunca pasa del último día completo: "
+        "min(fecha máxima de los datos, ayer en hora local UTC−3), que es también el valor por defecto.",
     )
     p.add_argument("--factores-version", default=None)
+    p.add_argument(
+        "--permitir-cambio-volumen",
+        action="store_true",
+        help="Publicar aunque algún año cerrado cambie ≥ 5 %% de filas respecto de la versión anterior "
+        "(p. ej. al cambiar la lista de puntos industriales). Queda registrado en validacion.json.",
+    )
     return p.parse_args(argv)
 
 

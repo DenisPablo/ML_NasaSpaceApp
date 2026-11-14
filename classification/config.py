@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
-SCHEMA_VERSION = "1.0.0"
+# 1.1.0: se agrega factores_region_mes (docs/02 §5.1 de la API).
+SCHEMA_VERSION = "1.1.0"
 
 # --- Satélites -----------------------------------------------------------------------
 MODIS_SATS = ("Terra", "Aqua")
@@ -21,6 +22,9 @@ MISSION_START = {
     "N21": date(2023, 3, 1),
 }
 MISSION_END = {"SNPP": date(2026, 11, 2)}
+
+# Primer día publicado (docs/04 de la API: antes del 2000-11-01 no hay datos).
+DATA_START = MISSION_START["Terra"]
 
 # Referencia VIIRS "observado": un solo satélite por fecha (nunca se suma NOAA-21)
 VIIRS_START = date(2012, 1, 20)
@@ -50,6 +54,8 @@ FACTOR_BOUNDS = {"modis": (0.5, 20.0), "terra": (0.5, 40.0)}
 TERRA_CALIB_YEARS = (2012, 2019)     # antes de la deriva orbital de Terra
 RANGE_BINS = ((0, 0), (1, 5), (6, 20), (21, 100), (101, 500), (501, 2_147_483_647))
 RANGE_QUANTILES = (0.10, 0.90)
+# Validación de volumen (docs/02): diferencia de filas con la versión anterior en años cerrados
+VOLUME_TOLERANCE = 0.05
 
 # --- Fuentes fijas industriales -----------------------------------------------------------
 PERSIST_MIN_DAYS = 30
