@@ -153,3 +153,47 @@ def test_recursive_multisensor_modis_and_viirs_n20(tmp_path: Path) -> None:
     rows = pq.read_table(output_parquet).to_pylist()
     assert [r["sensor_family"] for r in rows] == ["MODIS", "VIIRS"]
     assert [r["satellite"] for r in rows] == ["Terra", "N20"]
+
+
+def test_nrt_filters_recurrent_type2_static_sources(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    input_dir.mkdir()
+    output_parquet = tmp_path / "out" / "clean.parquet"
+
+    sp_header = [
+        "latitude", "longitude", "brightness", "scan", "track",
+        "acq_date", "acq_time", "satellite", "instrument",
+        "confidence", "version", "bright_t31", "frp", "daynight", "type",
+    ]
+    nrt_header = sp_header[:-1]
+
+    _write_csv(
+        input_dir / "fire_archive_J1V-C2_test.csv",
+        sp_header,
+        [
+            # Recurrent type == 2 industrial flare at (-33.30, -66.33)
+            ["-33.301", "-66.331", "330.0", "0.4", "0.4", "2024-01-01", "1500", "N20", "VIIRS", "h", "2", "295.0", "8.0", "D", "2"],
+            ["-33.302", "-66.332", "330.0", "0.4", "0.4", "2024-01-02", "1500", "N20", "VIIRS", "h", "2", "295.0", "8.0", "D", "2"],
+        ],
+    )
+    _write_csv(
+        input_dir / "fire_nrt_J1V-C2_test.csv",
+        nrt_header,
+        [
+            # Dropped in NRT because (-33.30, -66.33) is a recurrent type == 2 flare
+            ["-33.303", "-66.333", "330.0", "0.4", "0.4", "2026-09-01", "1500", "N20", "VIIRS", "h", "2.0NRT", "295.0", "8.0", "D"],
+            # Kept in NRT because (-33.45, -66.10) is not in blacklist
+            ["-33.450", "-66.100", "330.0", "0.4", "0.4", "2026-09-01", "1500", "N20", "VIIRS", "h", "2.0NRT", "295.0", "12.0", "D"],
+        ],
+    )
+
+    stats = run_cleaning_pipeline(
+        input_dir=input_dir,
+        output_parquet=output_parquet,
+        region="san_luis",
+        progress_factory=lambda total: ProgressTracker(total, stream=io.StringIO(), is_tty=False),
+    )
+
+    assert stats.rows_deduped == 1
+    rows = pq.read_table(output_parquet).to_pylist()
+    assert abs(rows[0]["latitude"] - (-33.45)) < 1e-3

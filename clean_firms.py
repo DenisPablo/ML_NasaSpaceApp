@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -207,12 +208,31 @@ def project_and_hash_grid(
     )
 
 
+def collect_static_flare_coords(
+    batch: pa.RecordBatch,
+    flare_counts: Counter[tuple[float, float]],
+) -> None:
+    """Count rounded (0.01 deg) coordinates of type == 2 static thermal sources in SP batches."""
+    if batch.num_rows == 0 or "type" not in batch.schema.names:
+        return
+    type_int = pc.cast(batch.column("type"), pa.int8(), safe=False)
+    flare_mask = pc.fill_null(pc.equal(type_int, 2), False)
+    if not pc.any(flare_mask).as_py():
+        return
+    sub = pa.Table.from_batches([batch]).filter(flare_mask)
+    lats = np.round(sub["latitude"].to_numpy(zero_copy_only=False).astype(np.float64), 2)
+    lons = np.round(sub["longitude"].to_numpy(zero_copy_only=False).astype(np.float64), 2)
+    for la, lo in zip(lats.tolist(), lons.tolist()):
+        flare_counts[(la, lo)] += 1
+
+
 def clean_batch(
     batch: pa.RecordBatch,
     source_quality: str,
     transformer: Transformer,
     region: str = "san_luis",
     valid_cell_ids: set[int] | None = None,
+    static_flare_coords: set[tuple[float, float]] | None = None,
 ) -> pa.Table | None:
     """Apply FIRMS quality filters, UTC->UTC-3 conversion, projection, and float32 casting."""
     if batch.num_rows == 0:
@@ -256,6 +276,20 @@ def clean_batch(
     filtered = table.filter(mask)
     if filtered.num_rows == 0:
         return None
+
+    # 3b. Exclude recurrent SP static sources (type == 2) from NRT batches lacking 'type'
+    if source_quality == "NRT" and static_flare_coords:
+        f_lats = np.round(filtered["latitude"].to_numpy(zero_copy_only=False).astype(np.float64), 2)
+        f_lons = np.round(filtered["longitude"].to_numpy(zero_copy_only=False).astype(np.float64), 2)
+        keep_nrt = np.fromiter(
+            ((la, lo) not in static_flare_coords for la, lo in zip(f_lats.tolist(), f_lons.tolist())),
+            dtype=bool,
+            count=filtered.num_rows,
+        )
+        if not np.any(keep_nrt):
+            return None
+        if not np.all(keep_nrt):
+            filtered = filtered.filter(pa.array(keep_nrt))
 
     # 4. UTC -> UTC-3 conversion
     acq_date_str = pc.cast(filtered["acq_date"], pa.string())
@@ -406,11 +440,15 @@ def run_cleaning_pipeline(
     with tempfile.TemporaryDirectory() as tmp_dir:
         staged_path = Path(tmp_dir) / "staged.parquet"
         writer = pq.ParquetWriter(staged_path, OUTPUT_SCHEMA, compression="snappy")
+        flare_counts: Counter[tuple[float, float]] = Counter()
+        static_flare_coords: set[tuple[float, float]] | None = None
 
         try:
             for csv_path in csv_files:
                 file_size = csv_path.stat().st_size
                 source_quality = infer_source_quality(csv_path.name)
+                if source_quality == "NRT" and static_flare_coords is None:
+                    static_flare_coords = {coord for coord, cnt in flare_counts.items() if cnt >= 2}
                 stats.files_processed += 1
 
                 # Estimate bytes per batch proportionally using batch rows vs average row width (~85 bytes)
@@ -419,12 +457,15 @@ def run_cleaning_pipeline(
                 reader = pv.open_csv(csv_path, read_options=read_opts, convert_options=convert_opts)
                 for batch in reader:
                     stats.rows_read += batch.num_rows
+                    if source_quality == "SP":
+                        collect_static_flare_coords(batch, flare_counts)
                     cleaned = clean_batch(
                         batch,
                         source_quality=source_quality,
                         transformer=transformer,
                         region=region,
                         valid_cell_ids=valid_cell_ids,
+                        static_flare_coords=static_flare_coords,
                     )
                     if cleaned is not None:
                         writer.write_table(cleaned)
