@@ -5,7 +5,7 @@ Solo usan numpy/pandas: la proyección se reemplaza por una transformación line
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -24,9 +24,12 @@ from classification.calibrate import (
 from classification.counts import (
     build_conteos,
     build_focos,
+    LOCAL_TZ,
     build_satelite_operativo,
+    default_fecha_max,
     exclude_static,
     normalize_satellite,
+    trim_to_missions,
 )
 from classification.geo import Province, assign_province, build_cell_mask, points_in_ring, provinces_table
 from classification.publish import conform, validate
@@ -171,6 +174,37 @@ def test_satelite_operativo_marks_outage_and_mission_end():
     late = _det([(C.SNPP_END + timedelta(days=1), "SNPP", 1)])
     o2 = build_satelite_operativo(late, C.SNPP_END + timedelta(days=1))
     assert not o2[(o2.satelite == "SNPP")].iloc[-1].operativo
+
+
+def test_trim_to_missions_drops_days_outside_each_mission():
+    t0, s_end = C.MISSION_START["Terra"], C.MISSION_END["SNPP"]
+    det = _det(
+        [
+            (date(2000, 10, 31), "Terra", 1),          # UTC 2000-11-01 → local día anterior
+            (t0, "Terra", 1),
+            (C.MISSION_START["Aqua"] - timedelta(days=1), "Aqua", 1),
+            (s_end, "SNPP", 1),
+            (s_end + timedelta(days=1), "SNPP", 1),    # después del fin de S-NPP
+            (s_end + timedelta(days=1), "N20", 1),     # N20 no tiene fin de misión
+        ]
+    )
+    kept, dropped = trim_to_missions(det)
+    assert sorted(zip(kept.fecha, kept.satelite)) == sorted(
+        [(t0, "Terra"), (s_end, "SNPP"), (s_end + timedelta(days=1), "N20")]
+    )
+    assert dropped == {"Terra": 1, "Aqua": 1, "SNPP": 1, "N20": 0, "N21": 0}
+    # Todo día con focos queda cubierto por satelite_operativo.
+    oper = build_satelite_operativo(kept, max(kept.fecha))
+    keys = set(zip(oper.fecha, oper.satelite))
+    assert all(k in keys for k in zip(kept.fecha, kept.satelite))
+
+
+def test_default_fecha_max_is_last_complete_day():
+    today = date(2026, 11, 14)
+    assert default_fecha_max(date(2026, 11, 14), today=today) == date(2026, 11, 13)
+    assert default_fecha_max(date(2026, 8, 31), today=today) == date(2026, 8, 31)
+    real_today = datetime.now(LOCAL_TZ).date()
+    assert default_fecha_max(real_today) < real_today
 
 
 # ---------------------------------------------------------------- calibración

@@ -40,6 +40,7 @@ porque la Fase 1 ya descarta esas filas. Sin él, esa regla queda apagada y se a
 | # | Paso | Módulo | Resultado |
 |---|---|---|---|
 | 1 | Normalizar el esquema de la Fase 1 al vocabulario del contrato | `counts.prepare_detections` | `fecha`, `satelite` (`Terra/Aqua/SNPP/N20/N21`), `confianza`… |
+| 1b | Recortar cada satélite a su misión (`MISSION_START` … `MISSION_END`) y cortar en `fecha_max` | `counts.trim_to_missions`, `counts.default_fecha_max` | `recorte_misiones` en `validacion.json` |
 | 2 | Máscara nacional de celdas 5 × 5 km con fracción dentro de cada provincia | `geo.build_cell_mask` | `dim_celdas` |
 | 3 | Provincias simplificadas para el mapa | `geo.provinces_table` | `dim_provincias` |
 | 4 | Puntos de calor fijos industriales (3 reglas) | `static_sources.detect_static_sources` | `puntos_industriales` |
@@ -60,6 +61,7 @@ porque la Fase 1 ya descarta esas filas. Sin él, esa regla queda apagada y se a
 | Entrada MODIS | Terra + Aqua (`tipo = modis`); solo Terra antes del 2002-07-04 (`tipo = terra`, calibrado 2012–2019) |
 | Factor | `f_p,m = (V_p,m + K·f_región,m) / (M_p,m + K)`, con `K = 200` y cascada región → país-mes → país |
 | Provincias con pocos datos | CABA, Santa Cruz y Tierra del Fuego usan el factor de su región |
+| Bordes de la serie | Se descartan los focos con fecha local fuera de la misión de su satélite (p. ej. Terra 2000-11-01 UTC que cae el 2000-10-31 local). Sin `--fecha-max`, la serie termina en el último día completo: `min(fecha máxima de los datos, ayer en UTC−3)` |
 | Días válidos | Solo días en que todos los satélites involucrados tienen al menos un foco en el país |
 | Punto persistente | ≥ 30 días, ≥ 3 años y ≥ 6 meses con focos en la misma celda de ~1 km |
 | Punto industrial | nocturno ≥ 60 % y ≥ 10 meses · `type = 2` ≥ 30 % · nocturno ≥ 80 % y ≥ 5 años |

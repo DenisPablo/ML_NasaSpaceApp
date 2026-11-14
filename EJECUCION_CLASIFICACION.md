@@ -56,7 +56,7 @@ python run_classification.py \
 | `--provinces-geojson` | Sí | Límites provinciales del IGN |
 | `--raw-dir` | Recomendada | CSV crudos: activa la regla "marcado industrial por FIRMS" (`type = 2`) |
 | `--out` | No (`data/serving_api`) | Carpeta de salida |
-| `--fecha-max` | No | Cortar en una fecha (`YYYY-MM-DD`) |
+| `--fecha-max` | No (último día completo) | Cortar en una fecha (`YYYY-MM-DD`). Sin la opción se usa `min(fecha máxima de los datos, ayer en hora local UTC−3)`, para no publicar el día de la corrida, que tiene datos NRT parciales. Si se pasa, se respeta tal cual |
 | `--k` | No (`200`) | Colchón de los factores; no cambiar sin recalibrar |
 | `--factores-version` | No (`AAAA.MM-b1`) | Etiqueta de la tabla de factores |
 
@@ -64,6 +64,8 @@ python run_classification.py \
 
 ```
 [1/7] Leyendo Parquet limpio
+      recorte a la ventana de cada misión: Terra ~24, …
+      fecha_max por defecto (último día completo): AAAA-MM-DD
 [2/7] Provincias y máscara nacional de celdas
 [3/7] Fuentes fijas industriales        → ~489 puntos · ~81.000 focos excluidos
 [4/7] Conteos celda-día, focos y satélites operativos
