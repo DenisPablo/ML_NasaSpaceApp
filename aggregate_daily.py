@@ -35,17 +35,23 @@ def build_daily_aggregation_sql(
     mask_posix: str | None = None,
     emit_start_date: date | None = None,
     emit_end_date: date | None = None,
+    use_temp_cells: bool = False,
 ) -> str:
     """Build DuckDB SQL for cartesian zero imputation and 3d/7d/30d rolling windows."""
     cells_source = mask_posix if mask_posix is not None else input_posix
     out_start = emit_start_date if emit_start_date is not None else start_date
     out_end = emit_end_date if emit_end_date is not None else end_date
-    return f"""
-    WITH celdas_activas AS (
+    cells_cte = (
+        ""
+        if use_temp_cells
+        else f"""celdas_activas AS (
         SELECT DISTINCT cell_id::INT32 AS cell_id
         FROM read_parquet('{cells_source}')
     ),
-    calendario AS (
+    """
+    )
+    return f"""
+    WITH {cells_cte}calendario AS (
         SELECT UNNEST(
             GENERATE_SERIES(DATE '{start_date.isoformat()}', DATE '{end_date.isoformat()}', INTERVAL 1 DAY)
         )::DATE AS fecha
@@ -103,49 +109,29 @@ def build_daily_aggregation_sql(
             scan_bar_modis,
             track_bar_modis,
             y_occ_modis,
-            SUM(n_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_modis_3d,
-            SUM(n_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_modis_7d,
-            SUM(n_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_modis_30d,
-            SUM(phi_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_modis_3d,
-            SUM(phi_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_modis_7d,
-            SUM(phi_modis) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_modis_30d,
+            SUM(n_modis) OVER w3::INT32 AS n_modis_3d,
+            SUM(n_modis) OVER w7::INT32 AS n_modis_7d,
+            SUM(n_modis) OVER w30::INT32 AS n_modis_30d,
+            SUM(phi_modis) OVER w3::FLOAT AS phi_modis_3d,
+            SUM(phi_modis) OVER w7::FLOAT AS phi_modis_7d,
+            SUM(phi_modis) OVER w30::FLOAT AS phi_modis_30d,
             n_viirs,
             phi_viirs,
             phi_max_viirs,
             scan_bar_viirs,
             track_bar_viirs,
             y_occ_viirs,
-            SUM(n_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_viirs_3d,
-            SUM(n_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_viirs_7d,
-            SUM(n_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            )::INT32 AS n_viirs_30d,
-            SUM(phi_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_viirs_3d,
-            SUM(phi_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_viirs_7d,
-            SUM(phi_viirs) OVER (
-                PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            )::FLOAT AS phi_viirs_30d
+            SUM(n_viirs) OVER w3::INT32 AS n_viirs_3d,
+            SUM(n_viirs) OVER w7::INT32 AS n_viirs_7d,
+            SUM(n_viirs) OVER w30::INT32 AS n_viirs_30d,
+            SUM(phi_viirs) OVER w3::FLOAT AS phi_viirs_3d,
+            SUM(phi_viirs) OVER w7::FLOAT AS phi_viirs_7d,
+            SUM(phi_viirs) OVER w30::FLOAT AS phi_viirs_30d
         FROM imputado
+        WINDOW
+            w3 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            w7 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 6 PRECEDING AND CURRENT ROW),
+            w30 AS (PARTITION BY cell_id ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)
     )
     SELECT *
     FROM ventanas
@@ -174,8 +160,13 @@ def run_aggregation_pipeline(
 
     con = duckdb.connect(database=":memory:")
     try:
+        con.execute("SET memory_limit = '5GB'; SET preserve_insertion_order = false;")
         input_posix = input_parquet.as_posix()
         mask_posix = mask_parquet.as_posix() if mask_parquet is not None else None
+        cells_source = mask_posix if mask_posix is not None else input_posix
+        con.execute(
+            f"CREATE TEMP TABLE celdas_activas AS SELECT DISTINCT cell_id::INT32 AS cell_id FROM read_parquet('{cells_source}')"
+        )
 
         min_d, max_d, input_rows = con.execute(
             f"SELECT MIN(fecha_local)::DATE, MAX(fecha_local)::DATE, COUNT(*) FROM read_parquet('{input_posix}')"
@@ -215,6 +206,7 @@ def run_aggregation_pipeline(
                     mask_posix=mask_posix,
                     emit_start_date=y_start,
                     emit_end_date=y_end,
+                    use_temp_cells=True,
                 )
                 part_posix = part_file.as_posix()
                 con.execute(f"COPY ({query}) TO '{part_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
@@ -237,6 +229,7 @@ def run_aggregation_pipeline(
                 start_date=eff_start,
                 end_date=eff_end,
                 mask_posix=mask_posix,
+                use_temp_cells=True,
             )
             out_posix = output_parquet.as_posix()
             con.execute(f"COPY ({query}) TO '{out_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")

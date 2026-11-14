@@ -208,14 +208,10 @@ def train_hurdle_in_batches(
     models_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(database=":memory:")
     try:
-        all_glob = (
-            input_path.as_posix()
-            if input_path.is_file()
-            else (input_path / "**" / "*.parquet").as_posix()
-        )
+        con.execute("SET memory_limit = '5GB'; SET preserve_insertion_order = false;")
         rows_arr = (
             con.sql(
-                f"SELECT DISTINCT (cell_id // {GRID_N_COLS})::INT32 FROM read_parquet('{all_glob}')"
+                f"SELECT DISTINCT (cell_id // {GRID_N_COLS})::INT32 FROM read_parquet('{year_files[0].as_posix()}')"
             )
             .to_arrow_table()
             .column(0)
@@ -231,8 +227,64 @@ def train_hurdle_in_batches(
         neg_thresh = max(1, int(round(neg_sample_rate * 1000)))
         neg_weight = 1.0 / max(neg_sample_rate, 1e-3)
 
-        clf_booster: lgb.Booster | None = None
+        occ_X_parts: list[np.ndarray] = []
+        occ_y_parts: list[np.ndarray] = []
+        pos_X_parts: list[np.ndarray] = []
+        pos_y_parts: list[np.ndarray] = []
+        val_X_parts: list[np.ndarray] = []
+        val_y_occ_parts: list[np.ndarray] = []
+        val_y_frp_parts: list[np.ndarray] = []
         occ_rows_used = 0
+
+        # Extract sampled training, positive intensity, and LOBBO validation batches year by year
+        for p_file in year_files:
+            p_posix = p_file.as_posix()
+            where_occ = (
+                f"{date_window} AND {train_spatial} AND "
+                f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
+            )
+            X_b, y_occ_b, _ = _fetch_float32_batch(con, _feature_select_sql(p_posix, where_occ))
+            if X_b.shape[0] > 0:
+                occ_X_parts.append(X_b)
+                occ_y_parts.append(y_occ_b)
+                occ_rows_used += int(X_b.shape[0])
+
+            where_pos_b = f"{date_window} AND {train_spatial} AND y_occ_viirs = 1 AND phi_viirs > 0"
+            X_pos_b, _, y_pos_b = _fetch_float32_batch(con, _feature_select_sql(p_posix, where_pos_b))
+            if X_pos_b.shape[0] > 0:
+                pos_X_parts.append(X_pos_b)
+                pos_y_parts.append(y_pos_b)
+
+            where_val_b = (
+                f"{date_window} AND {val_spatial} AND "
+                f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
+            )
+            X_val_b, y_val_occ_b, y_val_frp_b = _fetch_float32_batch(
+                con, _feature_select_sql(p_posix, where_val_b)
+            )
+            if X_val_b.shape[0] > 0:
+                val_X_parts.append(X_val_b)
+                val_y_occ_parts.append(y_val_occ_b)
+                val_y_frp_parts.append(y_val_frp_b)
+
+            tracker.update(
+                1,
+                label=f"Extrayendo batch ({p_file.parent.name})",
+                rows_read=occ_rows_used,
+                rows_kept=occ_rows_used,
+                force=True,
+            )
+
+        if not occ_X_parts or not pos_X_parts:
+            raise RuntimeError("No se encontraron filas de entrenamiento en la ventana indicada.")
+
+        X_occ = np.vstack(occ_X_parts)
+        y_occ = np.concatenate(occ_y_parts)
+        weights_occ = np.where(y_occ == 1, 1.0, neg_weight).astype(np.float32)
+
+        X_pos = np.vstack(pos_X_parts)
+        y_pos = np.concatenate(pos_y_parts)
+
         fobj = focal_loss_objective(gamma=2.0, alpha=0.75)
         lgb_params = {
             "learning_rate": 0.05,
@@ -243,39 +295,15 @@ def train_hurdle_in_batches(
             "seed": 42,
         }
 
-        # Stage 1a: Batch-by-year Focal Loss classifier (keeps peak RAM bounded)
-        for p_file in year_files:
-            where_occ = (
-                f"{date_window} AND {train_spatial} AND "
-                f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
-            )
-            X_b, y_occ_b, _ = _fetch_float32_batch(con, _feature_select_sql(p_file.as_posix(), where_occ))
-            if X_b.shape[0] > 0:
-                weights_b = np.where(y_occ_b == 1, 1.0, neg_weight).astype(np.float32)
-                dtrain = lgb.Dataset(X_b, label=y_occ_b, weight=weights_b, free_raw_data=True)
-                clf_booster = lgb.train(
-                    {**lgb_params, "objective": fobj},
-                    dtrain,
-                    num_boost_round=trees_per_batch,
-                    init_model=clf_booster,
-                    keep_training_booster=True,
-                )
-                occ_rows_used += int(X_b.shape[0])
-
-            tracker.update(
-                1,
-                label=f"Etapa 1a Focal ({p_file.parent.name})",
-                rows_read=occ_rows_used,
-                rows_kept=occ_rows_used,
-                force=True,
-            )
-
-        if clf_booster is None:
-            raise RuntimeError("No se encontraron filas de entrenamiento en la ventana indicada.")
+        # Stage 1a: Train Focal Loss classifier once across all combined years (no chronological drift)
+        dtrain = lgb.Dataset(X_occ, label=y_occ, weight=weights_occ, free_raw_data=True)
+        clf_booster = lgb.train(
+            {**lgb_params, "objective": fobj},
+            dtrain,
+            num_boost_round=trees_per_batch * len(year_files),
+        )
 
         # Stage 1b: Tweedie regressor strictly on positive detections (Y > 0)
-        where_pos = f"{date_window} AND {train_spatial} AND y_occ_viirs = 1 AND phi_viirs > 0"
-        X_pos, _, y_pos = _fetch_float32_batch(con, _feature_select_sql(all_glob, where_pos))
         reg_model = lgb.LGBMRegressor(
             objective="tweedie",
             tweedie_variance_power=1.62,
@@ -287,29 +315,27 @@ def train_hurdle_in_batches(
 
         tracker.update(
             1,
-            label="Etapa 1b Tweedie p=1.62",
+            label="Etapa 1a Focal + Etapa 1b Tweedie p=1.62",
             rows_read=occ_rows_used + int_rows_used,
             rows_kept=int_rows_used,
             force=True,
         )
 
-        # Evaluate on held-out LOBBO validation block (sampled negatives + all positives)
-        where_val = (
-            f"{date_window} AND {val_spatial} AND "
-            f"(y_occ_viirs = 1 OR (ABS(HASH(cell_id, fecha)) % 1000) < {neg_thresh})"
-        )
-        X_val, y_val_occ, y_val_frp = _fetch_float32_batch(con, _feature_select_sql(all_glob, where_val))
-        y_hat, _ = predict_hurdle(clf_booster, reg_model, X_val)
-
-        if X_val.shape[0] > 0:
+        # Evaluate on held-out LOBBO validation block
+        if val_X_parts:
+            X_val = np.vstack(val_X_parts)
+            y_val_occ = np.concatenate(val_y_occ_parts)
+            y_val_frp = np.concatenate(val_y_frp_parts)
+            y_hat, _ = predict_hurdle(clf_booster, reg_model, X_val)
             ss_res = float(np.sum((y_val_frp - y_hat) ** 2))
             ss_tot = float(np.sum((y_val_frp - np.mean(y_val_frp)) ** 2))
             val_r2 = (1.0 - ss_res / ss_tot) if ss_tot > 0.0 else 0.0
             val_mbe = float(np.mean(y_hat - y_val_frp))
             neg_mask = y_val_occ == 0
             val_zero_rate = float(np.mean(y_hat[neg_mask] == 0.0)) if np.any(neg_mask) else 1.0
+            val_rows = int(X_val.shape[0])
         else:
-            val_r2, val_mbe, val_zero_rate = 0.0, 0.0, 1.0
+            val_rows, val_r2, val_mbe, val_zero_rate = 0, 0.0, 0.0, 1.0
 
         clf_booster.save_model(str(models_dir / "hurdle_occ_focal.txt"))
         reg_model.booster_.save_model(str(models_dir / "hurdle_int_tweedie.txt"))
@@ -318,7 +344,7 @@ def train_hurdle_in_batches(
             1,
             label="Modelos guardados",
             rows_read=occ_rows_used + int_rows_used,
-            rows_kept=int(X_val.shape[0]),
+            rows_kept=val_rows,
             force=True,
         )
 
@@ -326,7 +352,7 @@ def train_hurdle_in_batches(
             batches_processed=len(year_files),
             occ_rows_used=occ_rows_used,
             int_rows_used=int_rows_used,
-            val_rows=int(X_val.shape[0]),
+            val_rows=val_rows,
             val_r2=val_r2,
             val_mbe=val_mbe,
             val_zero_rate=val_zero_rate,

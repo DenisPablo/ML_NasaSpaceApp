@@ -4,9 +4,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Raw FIRMS CSVs & generated Parquet datasets
+# Raw FIRMS CSVs, generated Parquet datasets & trained models
 Data-Argentina/
 DL_FIRE_SV-C2_847884/
 data/
+models/
 *.csv
 *.parquet
