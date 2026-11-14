@@ -78,11 +78,18 @@
   ],
   "puntos_industriales": {
     "n_puntos": 478,
-    "focos_excluidos": 73899
+    "focos_excluidos": 73897
+  },
+  "recorte_misiones": {
+    "Terra": 24,
+    "Aqua": 0,
+    "SNPP": 0,
+    "N20": 0,
+    "N21": 0
   },
   "filas": {
-    "focos": 6201796,
-    "conteos_celda_dia": 1890103,
+    "focos": 6201450,
+    "conteos_celda_dia": 1890033,
     "dim_celdas": 112711
   }
 }
