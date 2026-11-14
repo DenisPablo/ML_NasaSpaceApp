@@ -33,7 +33,15 @@ from classification.counts import (
     trim_to_missions,
 )
 from classification.geo import Province, assign_province, build_cell_mask, points_in_ring, provinces_table
-from classification.publish import build_metadata, conform, validate, validate_metadata
+from classification.publish import (
+    build_metadata,
+    conform,
+    partition_row_counts,
+    validate,
+    validate_metadata,
+    volume_check,
+    write_all,
+)
 from classification.static_sources import detect_static_sources, point_bin
 
 # ---------------------------------------------------------------- geometría
@@ -411,3 +419,33 @@ def test_validate_metadata_requires_fecha_ultimo_sp_and_contract_fields():
     assert any("fecha_min" in e for e in validate_metadata(temprana))
     ref = dict(ok, referencia_viirs=[{"satelite": "N21", "desde": "2023-03-01", "hasta": None}])
     assert any("referencia_viirs" in e for e in validate_metadata(ref))
+
+
+def test_volume_check_flags_closed_years_only():
+    t = _valid_tables()  # focos y conteos en 2020
+    prev = {"focos": {2019: 100, 2020: 2}, "conteos_celda_dia": {2020: 1}}
+    # 2020 es el año de fecha_max (abierto): no se compara. 2019 desapareció → error.
+    errs, res = volume_check(t, prev, date(2020, 8, 1))
+    assert errs == ["focos[anio=2019]: 0 filas vs 100 en la versión anterior (+100.0 %)"]
+    # Con fecha_max en 2021, 2020 queda cerrado: focos 2 vs 2 y conteos 1 vs 1 → sin error.
+    errs, res = volume_check(t, {"focos": {2020: 2}, "conteos_celda_dia": {2020: 1}}, date(2021, 1, 5))
+    assert errs == [] and res["anios_comparados"] == 2 and res["max_diferencia_pct"] == 0.0
+    errs, _ = volume_check(t, {"focos": {2020: 3}, "conteos_celda_dia": {2020: 1}}, date(2021, 1, 5))
+    assert len(errs) == 1 and errs[0].startswith("focos[anio=2020]")
+
+
+def test_write_all_hive_layout_and_current_link(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+    t = _valid_tables()
+    meta = build_metadata(date(2000, 11, 1), date(2020, 8, 1), date(2020, 8, 1), "v", "abc")
+    final = write_all(t, meta, tmp_path, extra={"validacion.json": {"x": 1}})
+    assert (tmp_path / "current").resolve() == final.resolve()
+    part = final / "focos" / "anio=2020" / "part-0.parquet"
+    f = pq.ParquetFile(part)
+    assert "anio" not in f.schema_arrow.names
+    assert f.metadata.row_group(0).column(0).compression == "ZSTD"
+    for name in ("dim_celdas", "factores_region_mes", "satelite_operativo", "puntos_industriales"):
+        assert (final / f"{name}.parquet").exists()
+    assert (final / "metadata.json").exists() and (final / "validacion.json").exists()
+    assert partition_row_counts(final) == {"conteos_celda_dia": {2020: 1}, "focos": {2020: 2}}
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir() if p.name != "current")

@@ -166,6 +166,47 @@ def build_metadata(
     }
 
 
+def partition_row_counts(version_dir: Path) -> dict[str, dict[int, int]]:
+    """Filas por ``anio`` de las tablas particionadas de una versión publicada (solo metadatos Parquet)."""
+    import pyarrow.parquet as pq
+
+    out: dict[str, dict[int, int]] = {}
+    for name in sorted(PARTITIONED):
+        counts: dict[int, int] = {}
+        for part in sorted(Path(version_dir).glob(f"{name}/anio=*/*.parquet")):
+            anio = int(part.parent.name.split("=", 1)[1])
+            counts[anio] = counts.get(anio, 0) + pq.ParquetFile(part).metadata.num_rows
+        out[name] = counts
+    return out
+
+
+def volume_check(
+    tables: dict[str, pd.DataFrame],
+    previous: dict[str, dict[int, int]],
+    fecha_max: date,
+    tolerance: float = C.VOLUME_TOLERANCE,
+) -> tuple[list[str], dict]:
+    """Compara filas por año cerrado (``anio < año de fecha_max``) con la versión anterior.
+
+    Devuelve (errores, resumen). Un año cerrado que estaba y desapareció también es error.
+    """
+    err: list[str] = []
+    resumen: dict = {"tolerancia_pct": 100 * tolerance, "max_diferencia_pct": 0.0, "anios_comparados": 0}
+    for name in sorted(PARTITIONED):
+        prev = previous.get(name, {})
+        new = tables[name]["anio"].astype(int).value_counts().to_dict() if len(tables[name]) else {}
+        for anio in sorted(a for a in set(prev) | set(new) if a < fecha_max.year):
+            p, n = prev.get(anio, 0), new.get(anio, 0)
+            if p == 0:
+                continue  # año nuevo en el histórico: no hay contra qué comparar
+            diff = abs(n - p) / p
+            resumen["anios_comparados"] += 1
+            resumen["max_diferencia_pct"] = max(resumen["max_diferencia_pct"], round(100 * diff, 3))
+            if diff >= tolerance:
+                err.append(f"{name}[anio={anio}]: {n:,} filas vs {p:,} en la versión anterior ({100 * diff:+.1f} %)")
+    return err, resumen
+
+
 METADATA_KEYS = (
     "schema_version", "data_version", "factores_version", "fecha_min", "fecha_max",
     "fecha_ultimo_sp", "referencia_viirs", "fuentes", "pipeline_commit",

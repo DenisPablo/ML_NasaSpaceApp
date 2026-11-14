@@ -54,6 +54,8 @@ FACTOR_BOUNDS = {"modis": (0.5, 20.0), "terra": (0.5, 40.0)}
 TERRA_CALIB_YEARS = (2012, 2019)     # antes de la deriva orbital de Terra
 RANGE_BINS = ((0, 0), (1, 5), (6, 20), (21, 100), (101, 500), (501, 2_147_483_647))
 RANGE_QUANTILES = (0.10, 0.90)
+# Validación de volumen (docs/02): diferencia de filas con la versión anterior en años cerrados
+VOLUME_TOLERANCE = 0.05
 
 # --- Fuentes fijas industriales -----------------------------------------------------------
 PERSIST_MIN_DAYS = 30

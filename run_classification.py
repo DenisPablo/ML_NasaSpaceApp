@@ -145,7 +145,14 @@ def run(args: argparse.Namespace) -> int:
         "satelite_operativo": oper,
         "puntos_industriales": puntos,
     }
-    from classification.publish import build_metadata, validate, validate_metadata, write_all
+    from classification.publish import (
+        build_metadata,
+        partition_row_counts,
+        validate,
+        validate_metadata,
+        volume_check,
+        write_all,
+    )
 
     sp = det.loc[det["fuente"] == "SP", "fecha"]
     meta = build_metadata(
@@ -156,6 +163,19 @@ def run(args: argparse.Namespace) -> int:
         pipeline_commit=git_commit(),
     )
     errors = validate(tables, fecha_max) + validate_metadata(meta)
+    prev_dir = Path(args.out) / "current"
+    if prev_dir.exists():
+        vol_err, metrics["volumen"] = volume_check(tables, partition_row_counts(prev_dir), fecha_max)
+        metrics["volumen"]["version_anterior"] = prev_dir.resolve().name
+        log(f"      volumen vs {prev_dir.resolve().name}: diferencia máxima {metrics['volumen']['max_diferencia_pct']} % "
+            f"en {metrics['volumen']['anios_comparados']} años cerrados")
+        if vol_err and args.permitir_cambio_volumen:
+            log("      AVISO (--permitir-cambio-volumen): " + "; ".join(vol_err))
+            metrics["volumen"]["cambios_aceptados"] = vol_err
+        else:
+            errors += vol_err
+    else:
+        log("      sin versión anterior en --out: se omite el control de volumen")
     if errors:
         log("ERROR: el contrato de datos no se cumple:\n  - " + "\n  - ".join(errors))
         return 2
@@ -180,6 +200,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "min(fecha máxima de los datos, ayer en hora local UTC−3), que es también el valor por defecto.",
     )
     p.add_argument("--factores-version", default=None)
+    p.add_argument(
+        "--permitir-cambio-volumen",
+        action="store_true",
+        help="Publicar aunque algún año cerrado cambie ≥ 5 %% de filas respecto de la versión anterior "
+        "(p. ej. al cambiar la lista de puntos industriales). Queda registrado en validacion.json.",
+    )
     return p.parse_args(argv)
 
 
