@@ -19,7 +19,9 @@ def _make_clean_row(
     scan: float,
     acq_time: str,
     sensor_family: str = "VIIRS",
+    satellite: str | None = None,
 ) -> dict:
+    sat = satellite if satellite is not None else ("Terra" if sensor_family == "MODIS" else "SNPP")
     return {
         "cell_id": cell_id,
         "col": cell_id,
@@ -36,7 +38,7 @@ def _make_clean_row(
         "scan": scan,
         "track": 0.4,
         "confidence": "n",
-        "satellite": "Terra" if sensor_family == "MODIS" else "SNPP",
+        "satellite": sat,
         "instrument": sensor_family,
         "sensor_family": sensor_family,
         "version": "2",
@@ -133,3 +135,31 @@ def test_yearly_partitioned_output_preserves_cross_year_rolling_windows(tmp_path
 
     pcts = [float(m) for m in re.findall(r"(\d+\.\d+)%", buf.getvalue())]
     assert pcts[-1] == 100.0
+
+
+def test_viirs_satellite_filter_isolates_snpp_target(tmp_path: Path) -> None:
+    clean_parquet = tmp_path / "clean_multi_viirs.parquet"
+    snpp_parquet = tmp_path / "daily_snpp.parquet"
+    all_parquet = tmp_path / "daily_all.parquet"
+
+    rows = [
+        _make_clean_row(100, date(2024, 1, 1), frp=15.0, scan=0.4, acq_time="1500", sensor_family="VIIRS", satellite="SNPP"),
+        _make_clean_row(100, date(2024, 1, 1), frp=20.0, scan=0.4, acq_time="1600", sensor_family="VIIRS", satellite="N20"),
+    ]
+    pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
+
+    run_aggregation_pipeline(input_parquet=clean_parquet, output_parquet=snpp_parquet)
+    snpp_rows = pq.read_table(snpp_parquet).to_pylist()
+    assert len(snpp_rows) == 1
+    assert snpp_rows[0]["n_viirs"] == 1
+    assert snpp_rows[0]["phi_viirs"] == 15.0
+
+    run_aggregation_pipeline(
+        input_parquet=clean_parquet,
+        output_parquet=all_parquet,
+        viirs_satellite="ALL",
+    )
+    all_rows = pq.read_table(all_parquet).to_pylist()
+    assert len(all_rows) == 1
+    assert all_rows[0]["n_viirs"] == 2
+    assert all_rows[0]["phi_viirs"] == 35.0

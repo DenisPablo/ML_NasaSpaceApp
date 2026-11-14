@@ -36,11 +36,17 @@ def build_daily_aggregation_sql(
     emit_start_date: date | None = None,
     emit_end_date: date | None = None,
     use_temp_cells: bool = False,
+    viirs_satellite: str | None = "SNPP",
 ) -> str:
     """Build DuckDB SQL for cartesian zero imputation and 3d/7d/30d rolling windows."""
     cells_source = mask_posix if mask_posix is not None else input_posix
     out_start = emit_start_date if emit_start_date is not None else start_date
     out_end = emit_end_date if emit_end_date is not None else end_date
+    if viirs_satellite and viirs_satellite.upper() != "ALL":
+        safe_sat = viirs_satellite.replace("'", "''")
+        viirs_filter = f"sensor_family = 'VIIRS' AND satellite = '{safe_sat}'"
+    else:
+        viirs_filter = "sensor_family = 'VIIRS'"
     cells_cte = (
         ""
         if use_temp_cells
@@ -70,11 +76,11 @@ def build_daily_aggregation_sql(
             COALESCE(MAX(frp) FILTER (WHERE sensor_family = 'MODIS'), 0.0)::FLOAT AS phi_max_modis,
             AVG(scan) FILTER (WHERE sensor_family = 'MODIS')::FLOAT AS scan_bar_modis,
             AVG(track) FILTER (WHERE sensor_family = 'MODIS')::FLOAT AS track_bar_modis,
-            COUNT(*) FILTER (WHERE sensor_family = 'VIIRS')::INT32 AS n_viirs,
-            COALESCE(SUM(frp) FILTER (WHERE sensor_family = 'VIIRS'), 0.0)::FLOAT AS phi_viirs,
-            COALESCE(MAX(frp) FILTER (WHERE sensor_family = 'VIIRS'), 0.0)::FLOAT AS phi_max_viirs,
-            AVG(scan) FILTER (WHERE sensor_family = 'VIIRS')::FLOAT AS scan_bar_viirs,
-            AVG(track) FILTER (WHERE sensor_family = 'VIIRS')::FLOAT AS track_bar_viirs
+            COUNT(*) FILTER (WHERE {viirs_filter})::INT32 AS n_viirs,
+            COALESCE(SUM(frp) FILTER (WHERE {viirs_filter}), 0.0)::FLOAT AS phi_viirs,
+            COALESCE(MAX(frp) FILTER (WHERE {viirs_filter}), 0.0)::FLOAT AS phi_max_viirs,
+            AVG(scan) FILTER (WHERE {viirs_filter})::FLOAT AS scan_bar_viirs,
+            AVG(track) FILTER (WHERE {viirs_filter})::FLOAT AS track_bar_viirs
         FROM read_parquet('{input_posix}')
         WHERE fecha_local BETWEEN DATE '{start_date.isoformat()}' AND DATE '{end_date.isoformat()}'
         GROUP BY cell_id, fecha_local
@@ -152,6 +158,7 @@ def run_aggregation_pipeline(
     mask_parquet: Path | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    viirs_satellite: str | None = "SNPP",
     progress_factory: Callable[[int], ProgressTracker] | None = None,
 ) -> AggregationStats:
     """Execute Phase 2 DuckDB daily aggregation (single file or year-partitioned dir)."""
@@ -213,6 +220,7 @@ def run_aggregation_pipeline(
                     emit_start_date=y_start,
                     emit_end_date=y_end,
                     use_temp_cells=True,
+                    viirs_satellite=viirs_satellite,
                 )
                 part_posix = part_file.as_posix()
                 con.execute(f"COPY ({query}) TO '{part_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
@@ -236,6 +244,7 @@ def run_aggregation_pipeline(
                 end_date=eff_end,
                 mask_posix=mask_posix,
                 use_temp_cells=True,
+                viirs_satellite=viirs_satellite,
             )
             out_posix = output_parquet.as_posix()
             con.execute(f"COPY ({query}) TO '{out_posix}' (FORMAT PARQUET, COMPRESSION ZSTD)")
@@ -311,6 +320,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Fecha final YYYY-MM-DD (opcional).",
     )
+    parser.add_argument(
+        "--viirs-satellite",
+        type=str,
+        default="SNPP",
+        help="Satelite VIIRS para target homogeneo (ej. SNPP, o ALL para toda la constelacion).",
+    )
     return parser.parse_args(argv)
 
 
@@ -323,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         mask_parquet=args.mask_parquet,
         start_date=args.start_date,
         end_date=args.end_date,
+        viirs_satellite=args.viirs_satellite,
     )
     print(
         f"\nFase 2 completada en {stats.elapsed_seconds:.2f}s | "
