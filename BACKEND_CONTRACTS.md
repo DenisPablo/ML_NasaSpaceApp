@@ -1,138 +1,89 @@
-# Contratos de Datos y API para Backend (DuckDB + FastAPI)
+# Contratos de Datos y Backend (Serving Parquet + FastAPI + DuckDB)
 
-Especificación exacta del esquema de **Parquet de serving** y los contratos REST/GeoJSON de **FastAPI** para el visor en **React + MapLibre GL**, ejecutando consultas DuckDB *in-process* directo sobre disco dentro del límite de **4 GB RAM / 2 vCPU** (DonWeb Cloud).
-
----
-
-## 1. Estructura exacta del Parquet de Serving
-
-Ubicación esperada en disco (particionado por año para lectura rápida con *partition pruning* en DuckDB):
-
-```text
-data/serving/firms_argentina_harmonized/
-  ├── year=2000/data.parquet
-  ├── ...
-  └── year=2026/data.parquet
-```
-
-### Esquema de columnas por `(cell_id, fecha)`
-
-| Columna | Tipo Parquet | Nullable | Descripción |
-| :--- | :--- | :--- | :--- |
-| `cell_id` | `INT32` | No | ID único de celda `5 × 5 km` (`row * 460 + col` en Argentina Albers `+proj=aea`) |
-| `grid_row` | `INT32` | No | Fila en grilla (`0..779`) |
-| `grid_col` | `INT32` | No | Columna en grilla (`0..459`) |
-| `lat_centro` | `FLOAT` (`float32`) | No | Latitud del centroide de la celda (`EPSG:4326`) para GeoJSON/MapLibre |
-| `lon_centro` | `FLOAT` (`float32`) | No | Longitud del centroide de la celda (`EPSG:4326`) para GeoJSON/MapLibre |
-| `fecha` | `DATE` | No | Fecha operativa local (`UTC-3`, `YYYY-MM-DD`) |
-| `n_modis` | `INT32` | No | Focos diarios crudos MODIS (`0` si no hubo detección) |
-| `phi_modis` | `FLOAT` (`float32`) | No | FRP diario acumulado crudo MODIS en MW |
-| `pi_hat` | `FLOAT` (`float32`) | No | Probabilidad de ocurrencia predicha por Etapa 1a (`[0.0, 1.0]`) |
-| `mu_hat` | `FLOAT` (`float32`) | No | Intensidad condicional predicha por Etapa 1b en MW |
-| `phi_harmonized` | `FLOAT` (`float32`) | No | **FRP diario armonizado VIIRS-equivalente** ($\hat{\pi} \cdot \hat{\mu}$) en MW |
-| `n_viirs` | `INT32` | No | Focos diarios reales VIIRS (`0` antes de 2012-01-20) |
-| `phi_viirs` | `FLOAT` (`float32`) | No | FRP diario real VIIRS en MW (`0.0` antes de 2012-01-20) |
-| `f_nube` | `FLOAT` (`float32`) | Sí | Fracción de nubosidad `[0.0, 1.0]` (`NULL` si no se acopló QA de nubes aún) |
+Contratos técnicos de almacenamiento y API REST/GeoJSON para servir la serie armonizada nacional (`2000–2026`) en un VPS (**DonWeb: 4 GB RAM / 2 vCPU**) mediante **DuckDB + FastAPI**, cumpliendo los requisitos de **[NASA Space Apps 2026 — Harmonization of MODIS and VIIRS Hot Spots](https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/)**.
 
 ---
 
-## 2. Endpoints FastAPI (Contratos REST / GeoJSON)
+## 1. Esquema de Serving (`data/serving/firms_argentina_harmonized/year=YYYY/data.parquet`)
 
-### `GET /api/v1/health`
-Verifica disponibilidad de la API y acceso de DuckDB a los Parquet de serving.
+Tabla **dispersa de celdas activas** (`n_modis > 0` o `n_viirs_n20 > 0`, ~150.000–300.000 filas totales en 26 años), proyectada en **Argentina Albers (`+proj=aea`, nunca `EPSG:5347`)** con celdas `5 × 5 km`. Ejemplo de referencia en San Luis (`lat = -33.3014`, `lon = -66.3321`): `cell_id = 229643`, `grid_col = 163`, `grid_row = 499`.
 
+| Columna | Tipo | Nullable | Descripción |
+| :--- | :--- | :---: | :--- |
+| `cell_id` | `INT32` | No | Identificador único de celda `5 × 5 km`. |
+| `grid_row`, `grid_col` | `INT32` | No | Fila y columna en la grilla Albers nacional. |
+| `lat_centro`, `lon_centro` | `FLOAT32` | No | Centroide WGS84 de la celda (para filtrado `bbox` y mapas). |
+| `fecha` | `DATE32` | No | Fecha operativa local (`UTC-3` fijo). |
+| `anio`, `mes` | `INT16` | No | Año (`2000–2026`) y mes (`1–12`) precalculados para agregación de calendario. |
+| `n_modis` | `INT32` | No | Conteo total MODIS (`Aqua + Terra`). |
+| `n_modis_aqua`, `n_modis_terra` | `INT32` | No | Conteo desglosado por satélite MODIS. |
+| `n_viirs_n20` | `INT32` | Sí | Conteo observado **VIIRS NOAA-20** (`NULL` antes de `2018-04-01`). |
+| `n_scaled_baseline` | `INT32` | No | Baseline estadístico `ROUND(n_modis * 5.5)`. |
+| `n_harmonized` | `INT32` / `FLOAT32` | No | Conteo oficial armonizado (`n_harmonized_ml` si `is_estimate`, sino `n_viirs_n20`). |
+| `phi_modis` | `FLOAT32` | No | FRP acumulado MODIS (MW). |
+| `phi_viirs_n20` | `FLOAT32` | Sí | FRP observado **VIIRS NOAA-20** en MW (`NULL` antes de `2018-04-01`). |
+| `phi_harmonized` | `FLOAT32` | No | FRP armonizado en MW (`phi_harmonized_ml` si `is_estimate`, sino `phi_viirs_n20`). |
+| `is_estimate` | `BOOL` | No | `true` si `fecha < 2018-04-01` (estimado ML); `false` si es observación real `N20`. |
+| `model_version` | `VARCHAR` | No | Versión del artefacto ML (ej. `tweedie-n20-v2`). |
+| `f_nube` | `FLOAT32` | Sí | Fracción de cobertura nubosa (`NULL` si no disponible). |
+
+> **Regla de serialización de nulos:** Si `f_nube IS NULL`, el campo `cloud_occluded` en cualquier respuesta JSON de la API **debe serializarse como `null`** (nunca como `false`).
+
+---
+
+## 2. Presets Regionales Soportados
+
+Todos los endpoints aceptan `bbox=min_lon,min_lat,max_lon,max_lat` libre sobre Argentina Continental o un parámetro `region` predefinido:
+- `argentina` (nacional completo)
+- `san_luis` (Provincia de San Luis — interfaz urbano-forestal serrana)
+- `delta_parana` (Delta del Paraná — estrés hídrico y pajonales)
+- `gran_chaco` / `cordoba` / `corrientes`
+
+---
+
+## 3. Endpoints FastAPI Obligatorios
+
+### 3.1 `GET /api/v1/calendar` (Producto Principal NASA)
+Devuelve la **Matriz Año × Mes (`2000–2026`)** de actividad de quema para el área consultada.
+
+- **Query params:** `bbox` o `region`, `start_year` (default `2000`), `end_year` (default `2026`), `metric` (`"count" | "frp"`, default `"count"`).
+- **Respuesta JSON (por celda año-mes):**
 ```json
 {
-  "status": "ok",
-  "duckdb_ready": true,
-  "min_date": "2000-11-01",
-  "max_date": "2026-11-13",
-  "active_cells": 65420
-}
-```
-
-### `GET /api/v1/grid/geojson`
-Devuelve las celdas agregadas para un rango de fechas y *bounding box* del viewport de MapLibre GL (conmutador **MODIS Crudo vs. Armonizado vs. VIIRS**).
-
-**Query params:**
-- `start_date` (`date`, requerido, `YYYY-MM-DD`)
-- `end_date` (`date`, requerido, `YYYY-MM-DD`)
-- `layer` (`enum`: `"harmonized"` | `"modis"` | `"viirs"`, default `"harmonized"`)
-- `bbox` (`string`, opcional: `"west,south,east,north"` en `EPSG:4326` para filtrar al viewport)
-- `min_frp` (`float`, default `0.0`, filtra celdas con FRP `> min_frp` para no enviar ceros al mapa)
-
-**Response (`200 OK`, `application/geo+json`):**
-```json
-{
-  "type": "FeatureCollection",
-  "metadata": {
-    "start_date": "2024-08-01",
-    "end_date": "2024-08-31",
-    "layer": "harmonized",
-    "feature_count": 124
-  },
-  "features": [
+  "region": "san_luis",
+  "metric": "count",
+  "cells": [
     {
-      "type": "Feature",
-      "id": 211610,
-      "geometry": {
-        "type": "Point",
-        "coordinates": [-66.3321, -33.3014]
-      },
-      "properties": {
-        "cell_id": 211610,
-        "frp_modis_crudo": 142.5,
-        "frp_armonizado": 389.2,
-        "frp_viirs_real": 401.8,
-        "n_modis": 4,
-        "n_viirs": 19,
-        "cloud_occluded": false
-      }
-    }
-  ]
-}
-```
-> `cloud_occluded`: `true` cuando `AVG(f_nube) > 0.80` en el rango consultado (`false` si `f_nube` es `NULL`).
-
-### `GET /api/v1/cells/{cell_id}/series`
-Serie temporal diaria (o mensual) para graficar la continuidad `2000–2026` al hacer clic en una celda.
-
-**Query params:**
-- `start_date` (`date`, default `"2000-11-01"`)
-- `end_date` (`date`, default `"2026-11-13"`)
-- `granularity` (`enum`: `"day"` | `"month"` | `"year"`, default `"month"`)
-
-**Response (`200 OK`, `application/json`):**
-```json
-{
-  "cell_id": 211610,
-  "granularity": "month",
-  "points": [
-    {
-      "period": "2011-09-01",
-      "frp_modis_crudo": 85.4,
-      "frp_armonizado": 241.0,
-      "frp_viirs_real": 0.0
-    },
-    {
-      "period": "2012-09-01",
-      "frp_modis_crudo": 92.1,
-      "frp_armonizado": 258.7,
-      "frp_viirs_real": 264.3
+      "anio": 2008,
+      "mes": 8,
+      "n_modis_raw": 412,
+      "n_viirs_obs": null,
+      "n_scaled_baseline": 2266,
+      "n_harmonized": 2340,
+      "frp_harmonized": 118450.5,
+      "is_estimate": true,
+      "historical_monthly_median": 1480.0,
+      "anomaly_pct": 58.11
     }
   ]
 }
 ```
 
-### `GET /api/v1/series/summary`
-Serie agregada nacional (o por `bbox`) para auditar la continuidad multidecadal `2000–2026` sin escalón artificial en 2012.
+### 3.2 `GET /api/v1/hotspots.csv`
+Descarga directa en **CSV** (`Content-Type: text/csv`) de la serie y focos armonizados filtrados.
 
-**Query params:** `start_date`, `end_date`, `granularity` (`"month"` | `"year"`), `bbox` (opcional).
+- **Query params:** `bbox` o `region`, `start_date` (`YYYY-MM-DD`), `end_date` (`YYYY-MM-DD`).
+- **Columnas CSV:** `fecha,cell_id,lat_centro,lon_centro,n_modis,n_viirs_n20,n_scaled_baseline,n_harmonized,phi_modis,phi_viirs_n20,phi_harmonized,is_estimate,model_version`.
 
----
+### 3.3 `GET /api/v1/grid/geojson`
+Devuelve una `FeatureCollection` GeoJSON de las celdas activas agregadas en un rango de fechas, lista para renderizar mapas conmutando entre conteo y energía.
 
-## 3. Reglas de implementación en FastAPI + DuckDB (4 GB RAM)
+- **Query params:** `bbox` o `region`, `start_date`, `end_date`, `metric` (`"count" | "frp"`).
+- **Properties por Feature:** `cell_id`, `grid_row`, `grid_col`, `n_modis`, `n_viirs_n20`, `n_scaled_baseline`, `n_harmonized`, `phi_modis`, `phi_viirs_n20`, `phi_harmonized`, `is_estimate`, `model_version`, `cloud_occluded` (`null` si `f_nube IS NULL`).
 
-1. **Conexión DuckDB *stateless* / *read-only*:** abrir `duckdb.connect(":memory:", config={"memory_limit": "1536MB", "threads": 2})` por consulta o pool liviano, sin mantener tablas materializadas en RAM.
-2. **Partition pruning:** filtrar siempre por `fecha BETWEEN ? AND ?` y rutas `year=YYYY/data.parquet` correspondientes al rango pedido.
-3. **Nunca enviar ceros masivos al frontend:** en `/grid/geojson`, aplicar `HAVING frp > :min_frp` (por defecto `0.0`) para devolver solo celdas con actividad térmica en el rango.
+### 3.4 `GET /api/v1/cells/{cell_id}/series`
+Devuelve la serie temporal diaria completa (`2000–2026`) de una celda puntual.
+
+- **Path param:** `cell_id` (ej. `229643`).
+- **Query params:** `start_date`, `end_date`.
+- **Campos por registro:** `fecha`, `n_modis`, `n_modis_aqua`, `n_modis_terra`, `n_viirs_n20`, `n_scaled_baseline`, `n_harmonized`, `phi_modis`, `phi_viirs_n20`, `phi_harmonized`, `is_estimate`, `model_version`, `cloud_occluded`.
