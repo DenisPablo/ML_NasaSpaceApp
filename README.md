@@ -1,57 +1,53 @@
-# Pipeline de Armonización MODIS × VIIRS (Argentina)
+# Armonización Satelital de Focos de Calor MODIS × VIIRS (`2000–2026`) — Escala Nacional (Argentina)
 
-Pipeline ETL y de entrenamiento **Hurdle GBDT** para reconstruir una serie temporal homogénea de **Fire Radiative Power (FRP)** diario en Megavatios (MW) entre **MODIS** (`2000–presente`) y **VIIRS** (`2012–presente`) sobre una grilla de `5 × 5 km` en proyección **Argentina Albers (`+proj=aea`)**, optimizado para correr dentro de **15–16 GB de RAM**.
+Pipeline de ingeniería de datos y Machine Learning para el desafío oficial **[NASA Space Apps 2026 — Harmonization of MODIS and VIIRS Hot Spots](https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/)**.
+
+Reconstruye una serie diaria nacional homogénea (`2000–2026`) de **Conteo de Focos Armonizados (`n_harmonized`)** y **Fire Radiative Power (`phi_harmonized`, MW)** sobre **Argentina Continental completa** en una grilla de área igual de `5 × 5 km` (`25 km²`), calibrando MODIS (`Terra`/`Aqua`) contra el sensor de referencia único **VIIRS NOAA-20 (`N20`)**.
 
 ---
 
-## Ruta rápida de ejecución
+## Arquitectura Unificada (Auditoría v2)
+
+| Componente | Especificación |
+| :--- | :--- |
+| **Alcance geográfico** | **Argentina Continental completa** (`111.248` celdas totales), con presets rápidos para **San Luis**, **Delta del Paraná** y **Gran Chaco / Córdoba / Corrientes**. |
+| **Estructura de datos** | **Matriz diaria dispersa de celdas activas** (`n_modis > 0` o `n_viirs > 0`), reduciendo ~1.000M de filas densas a **~150.000–300.000 filas activas** entrenables en segundos en CPU local y servibles en `< 20 ms` en VPS (`4 GB RAM / 2 vCPU`). |
+| **Proyección espacial** | **Argentina Albers Equal Area Conic (`+proj=aea`)** custom (`+lat_0=-37 +lon_0=-60 +lat_1=-26 +lat_2=-48 +x_0=2500000 +y_0=0 +ellps=GRS80 +units=m +no_defs`). **Nunca usar `EPSG:5347`.** |
+| **Huso horario** | **`UTC-3` fijo** para toda la serie `2000–2026` (preserva la hora solar local de órbitas heliosíncronas). |
+| **Sensor de referencia** | **VIIRS NOAA-20 (`satellite == 'N20'`)** únicamente (evita el salto artificial `×1,92` en FRP y `+37%` en celda-días al sumar `N21` desde marzo de 2023). |
+| **Ventana de calibración** | **`2018-04-01` a `2025-12-31`** (sin `SV-C2` en `2012–2017`; los valores observados VIIRS `< 2018-04-01` se almacenan como `NULL`). |
+| **Predictores (`X`)** | Desglose `Aqua` vs. `Terra` (`n_modis_aqua`, `n_modis_terra`, `phi_modis_aqua`, `phi_modis_terra`) + `phi_modis`, `phi_max_modis`, `scan_bar_modis`, `track_bar_modis` (km), ventanas `3d`/`7d` y estacionalidad. |
+| **Modelos** | **Baseline estadístico (`5,5×` / razón mediana mensual)** + **2 regresores LightGBM Tweedie** sobre celdas activas (`p=1.45` para conteos `n_harmonized_ml`, `p=1.62` para FRP `phi_harmonized_ml`). |
+| **Producto oficial NASA** | **Calendario de Actividad de Quema (Matriz Año × Mes, `2000–2026`)** con comparación contra **mediana histórica multianual** y descarga CSV. |
+
+---
+
+## Orden de Ejecución
 
 ```powershell
-# 0. Activar entorno e instalar dependencias (si aún no está creado)
-python -m venv .venv
+# 0. Instalar dependencias en .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 1. Fase 1: Limpieza multi-sensor + proyección + spatial hashing (con progreso %)
+# 1. Fase 1: Limpieza, filtro de antorchas NRT, UTC-3 y proyección Albers
 .\.venv\Scripts\python.exe clean_firms.py
 
-# 2. Fase 2: Agregación diaria por año + ceros explícitos + ventanas 3d/7d/30d
+# 2. Fase 2: Matriz diaria dispersa (Aqua/Terra + target NOAA-20) y ventanas 3d/7d
 .\.venv\Scripts\python.exe aggregate_daily.py
 
-# 3. Fase 3: Entrenamiento Hurdle GBDT por batches anuales + validación LOBBO (20 km)
+# 3. Fase 3: Baseline 5,5x + LightGBM Tweedie (Conteos p=1.45 y FRP p=1.62) + Validación doble
 .\.venv\Scripts\python.exe train_hurdle.py
 
-# Tests unitarios
+# 4. Fase 4: Backfilling (2000-2018-03) + empalme observado NOAA-20 -> Serving Parquet
+.\.venv\Scripts\python.exe predict_harmonized.py
+
+# 5. Suite de tests unitarios
 .\.venv\Scripts\python.exe -m pytest -v
 ```
 
 ---
 
-## Arquitectura del Pipeline
+## Documentación del Repositorio
 
-| Fase | Script | Entrada | Salida | Qué resuelve |
-| :--- | :--- | :--- | :--- | :--- |
-| **Fase 1** | `clean_firms.py` | `Data-Argentina/**/*.csv` | `data/clean/firms_argentina_clean.parquet` | Filtra `type == 0` (en `SP`), `confidence` (`n`/`h` o `>= 30`), `frp > 0`, convierte `UTC → UTC-3`, proyecta a Argentina Albers (`+proj=aea`), asigna `cell_id` en $O(1)$ y deduplica (`SP > NRT`). |
-| **Fase 2** | `aggregate_daily.py` | `data/clean/firms_argentina_clean.parquet` | `data/processed/firms_argentina_daily/year=YYYY/data.parquet` | Separa features **MODIS** y target **VIIRS**, imputa ceros explícitos (`celdas × días`) y calcula ventanas móviles `3d`/`7d`/`30d` por año con *lookback* de 29 días. |
-| **Fase 3** | `train_hurdle.py` | `data/processed/firms_argentina_daily` | `models/hurdle_occ_focal.txt`, `models/hurdle_int_tweedie.txt` | Entrena Etapa 1a (**Binary Focal Loss**, $\gamma=2.0, \alpha=0.75$) por *batches* anuales con submuestreo estratificado de ceros y Etapa 1b (**Tweedie** `p=1.62`) sobre `Y > 0`, validando con **LOBBO** (buffer de 20 km). |
-
----
-
-## Esquema de salida esperado tras la armonización (Inferencia)
-
-Al aplicar los modelos entrenados sobre la serie `2000–2026`, la tabla resultante de armonización (Parquet particionado por año, o CSV filtrado a celdas con actividad) contiene una fila por `(cell_id, fecha)`:
-
-| Columna | Tipo | Rol en Armonización |
-| :--- | :--- | :--- |
-| `cell_id` | `int32` | Identificador de celda (`5 × 5 km`, `N_COLS = 460`) |
-| `fecha` | `date` | Día operativo local (`UTC-3`, `YYYY-MM-DD`) |
-| `n_modis`, `phi_modis` | `int32`, `float32` | Conteo y FRP crudo de MODIS (MW) |
-| `pi_hat`, `mu_hat` | `float32`, `float32` | Probabilidad de ocurrencia e intensidad condicional predichas |
-| `phi_harmonized` | `float32` | **FRP armonizado VIIRS-equivalente** ($\hat{\pi} \cdot \hat{\mu}$) |
-| `n_viirs`, `phi_viirs` | `int32`, `float32` | Conteo y FRP real de VIIRS (`2012–2026`, `0` antes de 2012) |
-
----
-
-## Notas técnicas clave
-
-- **CRS (`+proj=aea`):** usar la definición custom Argentina Albers (`+proj=aea +lat_0=-37 +lon_0=-60 +lat_1=-26 +lat_2=-48 +x_0=2500000 +y_0=0 +ellps=GRS80 +units=m +no_defs`). No usar `EPSG:5347` (corresponde a Gauss-Krüger Faja 5).
-- **Memoria (15–16 GB RAM):** nunca cargar toda la grilla nacional densa en un único tensor; Fase 2 particiona por año en DuckDB y Fase 3 entrena Etapa 1a incrementalmente (`init_model`) por *batches* anuales con `float32`.
+- [DOCUMENTACION_PIPELINE.md](DOCUMENTACION_PIPELINE.md): Especificación técnica completa, decisiones de la Auditoría v2, variables físicas y protocolo de validación doble.
+- [FLUJO_PIPELINE.md](FLUJO_PIPELINE.md): Guía paso a paso del flujo `Datos originales → Limpieza → Agregación dispersa → ML → Serving`.
+- [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md): Esquema exacto de la tabla de *serving* y contratos FastAPI (`/calendar`, `/hotspots.csv`, `/grid/geojson`, `/cells/{cell_id}/series`).
