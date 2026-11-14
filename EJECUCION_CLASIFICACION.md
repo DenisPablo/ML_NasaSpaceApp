@@ -110,6 +110,7 @@ data/serving_api/
     ├── dim_celdas.parquet
     ├── dim_provincias.parquet
     ├── factores_provincia_mes.parquet
+    ├── factores_region_mes.parquet
     ├── rangos.parquet
     ├── satelite_operativo.parquet
     ├── puntos_industriales.parquet
@@ -124,6 +125,7 @@ data/serving_api/
 | `dim_celdas.parquet` | Parquet ZSTD | 112 k | Máscara nacional, celda → provincia/región, geometría |
 | `dim_provincias.parquet` | Parquet ZSTD | 24 | Selector de provincia y polígonos del mapa |
 | `factores_provincia_mes.parquet` | Parquet ZSTD | 576 (24 × 12 × 2 tipos) | `estimado = factor × focos MODIS` |
+| `factores_region_mes.parquet` | Parquet ZSTD | 144 (6 × 12 × 2 tipos: 5 regiones + `Argentina`) | Respaldo si falta una combinación provincia × mes |
 | `rangos.parquet` | Parquet ZSTD | 6 | Rango del 80 % por tramo de focos MODIS |
 | `satelite_operativo.parquet` | Parquet ZSTD | ~40 k | Distinguir "sin datos" de "cero focos" |
 | `puntos_industriales.parquet` | Parquet ZSTD | ~489 | Capa informativa del mapa |
@@ -138,7 +140,7 @@ Columnas y tipos exactos de cada archivo: [FireHistoryInterfaceAPI · docs/02-co
 
 | Se entrega | No se entrega |
 |---|---|
-| **La carpeta de versión completa** `data/serving_api/<versión>/` (los 8 Parquet/carpetas + `metadata.json`). `validacion.json` puede ir: sirve como registro y la API lo ignora. | CSV crudos (`Data-Argentina/`) |
+| **La carpeta de versión completa** `data/serving_api/<versión>/` (los 9 Parquet/carpetas + `metadata.json`). `validacion.json` puede ir: sirve como registro y la API lo ignora. | CSV crudos (`Data-Argentina/`) |
 | | Parquet limpio (`data/clean/`) |
 | | `provincias.geojson` (ya está dentro de `dim_provincias`) |
 | | Salidas de las fases 2–4 (`data/daily`, `models/`, serving v2) |
