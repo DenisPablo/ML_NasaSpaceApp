@@ -15,3 +15,6 @@ models/
 # Excepción: versión publicada de la clasificación (Propuesta B) para el backend
 !serving_api/
 !serving_api/**
+
+# Paquetes de versiones para Releases (scripts/empaquetar_version.sh)
+dist/
