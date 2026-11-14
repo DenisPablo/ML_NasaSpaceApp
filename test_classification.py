@@ -18,6 +18,7 @@ from classification.calibrate import (
     monthly_counts,
     predict,
     range_coverage,
+    region_factors_table,
     score,
 )
 from classification.counts import (
@@ -231,6 +232,28 @@ def test_low_data_provinces_use_region_factor():
     assert f[("02", 5)] == pytest.approx(fit.region_m[("Pampeana", 5)], rel=1e-6)
 
 
+def test_region_factors_table_exports_fit_levels():
+    c, oper = _synthetic_conteos({"74": (3.0, 20), "70": (6.0, 20), "06": (2.0, 10)})
+    m = monthly_counts(c, oper, "modis", (2012, 2016))
+    fits = {"modis": fit_hierarchical(m), "terra": fit_hierarchical(m)}
+    t = region_factors_table(fits, "v1")
+    regs = set(C.PROVINCE_REGION.values()) | {C.NATIONAL_REGION}
+    assert len(t) == len(regs) * 12 * 2
+    assert set(t.region) == regs and not t.duplicated(["region", "mes", "tipo"]).any()
+    assert list(t.columns) == ["region", "mes", "tipo", "factor", "n_modis_calib", "factores_version"]
+    i = t[t.tipo == "modis"].set_index(["region", "mes"])
+    fit = fits["modis"]
+    assert i.loc[("Cuyo", 7), "factor"] == pytest.approx(fit.region_m[("Cuyo", 7)], rel=1e-6)
+    assert i.loc[(C.NATIONAL_REGION, 7), "factor"] == pytest.approx(fit.nat_m[7], rel=1e-6)
+    # n_modis_calib: suma de M de las provincias de la región / del país en ese mes.
+    mm = m[m.mes == 7]
+    assert i.loc[("Cuyo", 7), "n_modis_calib"] == mm[mm.region == "Cuyo"].M.sum()
+    assert i.loc[(C.NATIONAL_REGION, 7), "n_modis_calib"] == mm.M.sum()
+    assert i.loc[("NOA", 7), "n_modis_calib"] == 0
+    # Región sin datos: hereda el factor nacional del mes (encogimiento completo).
+    assert i.loc[("NOA", 7), "factor"] == pytest.approx(fit.nat_m[7], rel=1e-6)
+
+
 def test_predict_score_and_ranges():
     c, oper = _synthetic_conteos({"74": (3.0, 4), "70": (5.0, 1)}, noise=0.3, seed=1)
     m = monthly_counts(c, oper, "modis", (2012, 2016))
@@ -261,6 +284,11 @@ def _valid_tables():
         [("74", m, t, 3.0, "provincia", 100, "v") for t in ("modis", "terra") for m in range(1, 13)],
         columns=["provincia_id", "mes", "tipo", "factor", "nivel_origen", "n_modis_calib", "factores_version"],
     )
+    regs = sorted(set(C.PROVINCE_REGION.values())) + [C.NATIONAL_REGION]
+    fac_reg = pd.DataFrame(
+        [(r, m, t, 3.0, 1000, "v") for t in ("modis", "terra") for r in regs for m in range(1, 13)],
+        columns=["region", "mes", "tipo", "factor", "n_modis_calib", "factores_version"],
+    )
     rangos = pd.DataFrame({"modis_min": [0, 1], "modis_max": [0, 2_147_483_647], "mult_bajo": [0.0, 0.5], "mult_alto": [10.0, 2.0]})
     puntos = detect_static_sources(det)
     puntos["provincia_id"] = None
@@ -270,6 +298,7 @@ def _valid_tables():
         "dim_celdas": dim_c,
         "dim_provincias": provinces_table(provs),
         "factores_provincia_mes": fac,
+        "factores_region_mes": fac_reg,
         "rangos": rangos,
         "satelite_operativo": build_satelite_operativo(det, d1),
         "puntos_industriales": puntos,
@@ -292,6 +321,12 @@ def test_validate_detects_contract_violations():
     assert any("factor fuera" in e for e in errs)
     assert any("cell_id fuera" in e for e in errs)
     assert any("posteriores a fecha_max" in e for e in errs)
+    t3 = _valid_tables()
+    t3["factores_region_mes"] = t3["factores_region_mes"].iloc[1:]
+    t3["factores_region_mes"].loc[5, "factor"] = 0.1
+    errs3 = validate(t3, date(2020, 8, 1))
+    assert any("factores_region_mes[modis]: se esperaban 6 × 12" in e for e in errs3)
+    assert any("factores_region_mes[modis]: factor fuera" in e for e in errs3)
     t2 = _valid_tables()
     del t2["rangos"]
     assert validate(t2, date(2020, 8, 1)) == ["rangos: tabla ausente"]

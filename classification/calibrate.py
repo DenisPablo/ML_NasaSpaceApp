@@ -68,6 +68,8 @@ class Fit:
     nat_m: pd.Series                 # índice: mes
     region_m: pd.Series              # índice: (region, mes)
     prov_m: pd.DataFrame             # columnas: provincia_id, mes, factor, nivel_origen, n_modis_calib
+    nat_n: pd.Series | None = None   # focos MODIS de calibración por mes (índice: mes)
+    region_n: pd.Series | None = None  # focos MODIS de calibración por (region, mes)
 
 
 def fit_hierarchical(monthly: pd.DataFrame, k: float = C.SHRINK_K) -> Fit:
@@ -110,7 +112,10 @@ def fit_hierarchical(monthly: pd.DataFrame, k: float = C.SHRINK_K) -> Fit:
             "n_modis_calib": m_pm.astype("int32"),
         }
     )
-    return Fit(nat=float(nat), nat_m=nat_m, region_m=region_m, prov_m=prov_m)
+    return Fit(
+        nat=float(nat), nat_m=nat_m, region_m=region_m, prov_m=prov_m,
+        nat_n=by_m["M"], region_n=by_rm["M"],
+    )
 
 
 def factors_table(fits: dict[str, Fit], version: str) -> pd.DataFrame:
@@ -122,6 +127,41 @@ def factors_table(fits: dict[str, Fit], version: str) -> pd.DataFrame:
         t["factores_version"] = version
         frames.append(t)
     return pd.concat(frames, ignore_index=True)
+
+
+def region_factors_table(fits: dict[str, Fit], version: str) -> pd.DataFrame:
+    """Tabla ``factores_region_mes``: los niveles región × mes y país × mes (``region = Argentina``).
+
+    Son los mismos factores intermedios de ``fit_hierarchical`` (no se recalculan); la API los usa
+    solo como respaldo cuando falta una combinación provincia × mes.
+    """
+    frames = []
+    for tipo, fit in fits.items():
+        reg = pd.DataFrame(
+            {
+                "region": fit.region_m.index.get_level_values("region"),
+                "mes": fit.region_m.index.get_level_values("mes"),
+                "factor": fit.region_m.to_numpy(),
+                "n_modis_calib": fit.region_n.reindex(fit.region_m.index).to_numpy(),
+            }
+        )
+        nat = pd.DataFrame(
+            {
+                "region": C.NATIONAL_REGION,
+                "mes": fit.nat_m.index,
+                "factor": fit.nat_m.to_numpy(),
+                "n_modis_calib": fit.nat_n.reindex(fit.nat_m.index).to_numpy(),
+            }
+        )
+        t = pd.concat([reg, nat], ignore_index=True)
+        t.insert(2, "tipo", tipo)
+        t["factores_version"] = version
+        frames.append(t)
+    out = pd.concat(frames, ignore_index=True)
+    out["mes"] = out["mes"].astype("int8")
+    out["factor"] = out["factor"].astype("float32")
+    out["n_modis_calib"] = out["n_modis_calib"].astype("int32")
+    return out
 
 
 def predict(monthly: pd.DataFrame, fit: Fit) -> np.ndarray:
