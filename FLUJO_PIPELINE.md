@@ -2,6 +2,8 @@
 
 Guía operativa del flujo de datos para **[NASA Space Apps 2026 — Harmonization of MODIS and VIIRS Hot Spots](https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/)** a **escala Nacional (Argentina Continental)**.
 
+> **Nota:** este documento describe las fases 2–4 experimentales (referencia NOAA-20 y factor `5,5×`). El producto publicado para la API usa S-NPP (`2012-01-20 → 2026-11-02`) y NOAA-20 desde `2026-11-03`, con factores jerárquicos provincia × mes: ver [CLASIFICACION.md](CLASIFICACION.md).
+
 ---
 
 ## Diagrama de Fases

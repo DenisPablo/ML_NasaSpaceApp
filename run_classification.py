@@ -40,8 +40,10 @@ from classification.counts import (
     build_conteos,
     build_focos,
     build_satelite_operativo,
+    default_fecha_max,
     exclude_static,
     prepare_detections,
+    trim_to_missions,
 )
 from classification.geo import assign_province, build_cell_mask, load_provinces_geojson, provinces_table
 from classification.static_sources import detect_static_sources, type2_share_from_raw
@@ -79,8 +81,14 @@ def run(args: argparse.Namespace) -> int:
     clean = pd.read_parquet(args.clean, columns=CLEAN_COLUMNS)
     det = prepare_detections(clean)
     del clean
-    fecha_max = max(det["fecha"]) if args.fecha_max is None else date.fromisoformat(args.fecha_max)
-    det = det[det["fecha"] <= fecha_max]
+    det, recorte = trim_to_missions(det)
+    log("      recorte a la ventana de cada misión: " + ", ".join(f"{s} {n:,}" for s, n in recorte.items()))
+    if args.fecha_max is None:
+        fecha_max = default_fecha_max(max(det["fecha"]))
+        log(f"      fecha_max por defecto (último día completo): {fecha_max}")
+    else:
+        fecha_max = date.fromisoformat(args.fecha_max)
+    det = det[det["fecha"] <= fecha_max].reset_index(drop=True)
 
     log("[2/7] Provincias y máscara nacional de celdas")
     from classification.geo import make_albers_transforms
@@ -121,6 +129,7 @@ def run(args: argparse.Namespace) -> int:
     metrics["factor_nacional"] = {t: f.nat for t, f in fits.items()}
     metrics["rangos"] = rangos_full.to_dict(orient="records")
     metrics["puntos_industriales"] = {"n_puntos": int(len(puntos)), "focos_excluidos": n_excl}
+    metrics["recorte_misiones"] = recorte
     metrics["filas"] = {"focos": int(len(focos)), "conteos_celda_dia": int(len(conteos)), "dim_celdas": int(len(dim_celdas))}
     log(json.dumps({k: v for k, v in metrics.items() if k != "rangos"}, ensure_ascii=False, indent=2, default=str))
 
@@ -163,7 +172,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--raw-dir", type=Path, default=None, help="CSV crudos de FIRMS (para la proporción type=2).")
     p.add_argument("--out", type=Path, default=Path("data/serving_api"))
     p.add_argument("--k", type=float, default=C.SHRINK_K, help="Colchón de encogimiento (focos MODIS).")
-    p.add_argument("--fecha-max", default=None, help="Fecha local máxima a publicar (YYYY-MM-DD).")
+    p.add_argument(
+        "--fecha-max",
+        default=None,
+        help="Fecha local máxima a publicar (YYYY-MM-DD). Por defecto, el último día completo: "
+        "min(fecha máxima de los datos, ayer en hora local UTC−3).",
+    )
     p.add_argument("--factores-version", default=None)
     return p.parse_args(argv)
 

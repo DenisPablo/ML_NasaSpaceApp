@@ -1,5 +1,7 @@
 # Contratos de Datos y Backend (Serving Parquet + FastAPI + DuckDB)
 
+> ⚠️ **Reemplazado.** El contrato vigente entre el pipeline y la API es el de FireHistoryInterfaceAPI ([`docs/02-contratos-de-datos.md`](https://github.com/smlopezsm/FireHistoryInterfaceAPI/blob/main/docs/02-contratos-de-datos.md)), producido por `run_classification.py` (ver [CLASIFICACION.md](CLASIFICACION.md)). Este documento describe la salida experimental de las fases 2–4 (LightGBM) y no debe usarse para construir el backend.
+
 Contratos técnicos de almacenamiento y API REST/GeoJSON para servir la serie armonizada nacional (`2000–2026`) en un VPS (**DonWeb: 4 GB RAM / 2 vCPU**) mediante **DuckDB + FastAPI**, cumpliendo los requisitos de **[NASA Space Apps 2026 — Harmonization of MODIS and VIIRS Hot Spots](https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/)**.
 
 ---

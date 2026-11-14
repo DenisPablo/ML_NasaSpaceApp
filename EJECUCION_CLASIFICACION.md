@@ -56,7 +56,7 @@ python run_classification.py \
 | `--provinces-geojson` | Sí | Límites provinciales del IGN |
 | `--raw-dir` | Recomendada | CSV crudos: activa la regla "marcado industrial por FIRMS" (`type = 2`) |
 | `--out` | No (`data/serving_api`) | Carpeta de salida |
-| `--fecha-max` | No | Cortar en una fecha (`YYYY-MM-DD`) |
+| `--fecha-max` | No (último día completo) | Cortar en una fecha (`YYYY-MM-DD`). Sin la opción se usa `min(fecha máxima de los datos, ayer en hora local UTC−3)`, para no publicar el día de la corrida, que tiene datos NRT parciales. Si se pasa, se respeta tal cual |
 | `--k` | No (`200`) | Colchón de los factores; no cambiar sin recalibrar |
 | `--factores-version` | No (`AAAA.MM-b1`) | Etiqueta de la tabla de factores |
 
@@ -64,6 +64,8 @@ python run_classification.py \
 
 ```
 [1/7] Leyendo Parquet limpio
+      recorte a la ventana de cada misión: Terra ~24, …
+      fecha_max por defecto (último día completo): AAAA-MM-DD
 [2/7] Provincias y máscara nacional de celdas
 [3/7] Fuentes fijas industriales        → ~489 puntos · ~81.000 focos excluidos
 [4/7] Conteos celda-día, focos y satélites operativos
@@ -166,6 +168,47 @@ curl -X POST https://<api>/admin/reload -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 Volver a la versión anterior: `ln -sfn /var/data/releases/<versión-anterior> /var/data/current` y repetir el paso 3.
+
+### Publicar una versión como Release de GitHub
+
+En lugar de guardar cada versión en el historial de git, se empaqueta y se publica como un
+*Release* del repo. El archivo comprimido y su `sha256` quedan como adjuntos descargables.
+
+**1. Empaquetar** (genera los archivos en `dist/`, que está en `.gitignore`):
+
+```bash
+VERSION=$(readlink data/serving_api/current)
+scripts/empaquetar_version.sh data/serving_api/$VERSION
+# → dist/serving_api_$VERSION.tar.zst (o .tar.gz si no está zstd) + dist/serving_api_$VERSION.sha256
+```
+
+**2. Crear el Release** (con la extensión que haya generado el paso 1):
+
+```bash
+gh release create data-$VERSION \
+  dist/serving_api_$VERSION.tar.zst dist/serving_api_$VERSION.sha256 \
+  --title "Datos clasificación $VERSION" \
+  --notes-file data/serving_api/$VERSION/validacion.json
+```
+
+**3. En el VPS**: descargar, verificar, descomprimir y activar:
+
+```bash
+VERSION=<versión>
+cd /tmp
+gh release download data-$VERSION -R DenisPablo/ML_NasaSpaceApp
+#   (sin gh: curl -LO https://github.com/DenisPablo/ML_NasaSpaceApp/releases/download/data-$VERSION/<archivo>)
+sha256sum -c serving_api_$VERSION.sha256          # tiene que decir OK
+
+mkdir -p /var/data/releases
+tar --zstd -xf serving_api_$VERSION.tar.zst -C /var/data/releases/   # .tar.gz: tar -xzf …
+ls /var/data/releases/$VERSION/metadata.json
+
+ln -sfn /var/data/releases/$VERSION /var/data/current
+```
+
+Después, avisar a la API para que recargue, como en el paso 3 de arriba. Para volver atrás se
+cambia el enlace a la versión anterior, que sigue en `/var/data/releases/`.
 
 ### En desarrollo local (sin VPS)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -43,6 +43,31 @@ def prepare_detections(clean: pd.DataFrame) -> pd.DataFrame:
     d = d[d["satelite"].notna()].copy()
     d["sensor"] = np.where(d["satelite"].isin(C.MODIS_SATS), "MODIS", "VIIRS")
     return d.reset_index(drop=True)
+
+
+LOCAL_TZ = timezone(timedelta(hours=-3))
+
+
+def trim_to_missions(det: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Descarta detecciones con ``fecha`` local fuera de la misión de su satélite.
+
+    Al pasar de UTC a hora local (UTC−3), los focos de las primeras horas UTC del día de
+    inicio caen el día anterior (p. ej. Terra 2000-11-01 → 2000-10-31), un día que no tiene
+    fila en ``satelite_operativo``. Devuelve (detecciones, focos descartados por satélite).
+    """
+    start = det["satelite"].map(C.MISSION_START)
+    end = det["satelite"].map(C.MISSION_END)
+    fecha = pd.to_datetime(det["fecha"])
+    out = (fecha < pd.to_datetime(start)) | (end.notna() & (fecha > pd.to_datetime(end)))
+    dropped = det.loc[out, "satelite"].value_counts()
+    counts = {sat: int(dropped.get(sat, 0)) for sat in C.ALL_SATS}
+    return det.loc[~out].reset_index(drop=True), counts
+
+
+def default_fecha_max(data_max: date, today: date | None = None) -> date:
+    """Último día completo: ``min(fecha máxima de los datos, ayer en hora local UTC−3)``."""
+    today = today or datetime.now(LOCAL_TZ).date()
+    return min(data_max, today - timedelta(days=1))
 
 
 def exclude_static(det: pd.DataFrame, puntos: pd.DataFrame) -> tuple[pd.DataFrame, int]:
