@@ -1,4 +1,4 @@
-"""Tests for Phase 2 daily aggregation, zero imputation, and rolling windows."""
+"""Tests for Phase 2 sparse active-cell daily aggregation (Aqua/Terra + NOAA-20)."""
 
 from datetime import date, datetime
 import io
@@ -21,11 +21,11 @@ def _make_clean_row(
     sensor_family: str = "VIIRS",
     satellite: str | None = None,
 ) -> dict:
-    sat = satellite if satellite is not None else ("Terra" if sensor_family == "MODIS" else "SNPP")
+    sat = satellite if satellite is not None else ("Aqua" if sensor_family == "MODIS" else "N20")
     return {
         "cell_id": cell_id,
-        "col": cell_id,
-        "row": 0,
+        "col": cell_id % 600,
+        "row": cell_id // 600,
         "fecha_local": fecha,
         "timestamp_utc3": datetime(fecha.year, fecha.month, fecha.day, 12, 0),
         "latitude": -33.3,
@@ -50,15 +50,18 @@ def _make_clean_row(
     }
 
 
-def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -> None:
+def test_sparse_daily_aggregation_aqua_terra_and_null_pre_n20(tmp_path: Path) -> None:
     clean_parquet = tmp_path / "clean.parquet"
     daily_parquet = tmp_path / "daily.parquet"
 
     rows = [
-        _make_clean_row(100, date(2024, 1, 1), frp=10.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
-        _make_clean_row(100, date(2024, 1, 1), frp=25.0, scan=0.6, acq_time="1700", sensor_family="VIIRS"),
-        _make_clean_row(100, date(2024, 1, 1), frp=12.0, scan=1.5, acq_time="1510", sensor_family="MODIS"),
-        _make_clean_row(200, date(2024, 1, 4), frp=5.0, scan=0.5, acq_time="1300", sensor_family="VIIRS"),
+        # Pre-N20 era (2010): MODIS Aqua + Terra, VIIRS must be NULL
+        _make_clean_row(100, date(2010, 8, 1), frp=12.0, scan=1.5, acq_time="1510", sensor_family="MODIS", satellite="Aqua"),
+        _make_clean_row(100, date(2010, 8, 1), frp=8.0, scan=1.1, acq_time="1310", sensor_family="MODIS", satellite="Terra"),
+        # N20 era (2024): N20 + N21 on same day -> only N20 counted by default
+        _make_clean_row(100, date(2024, 1, 1), frp=15.0, scan=0.4, acq_time="1500", sensor_family="VIIRS", satellite="N20"),
+        _make_clean_row(100, date(2024, 1, 1), frp=25.0, scan=0.4, acq_time="1600", sensor_family="VIIRS", satellite="N21"),
+        _make_clean_row(100, date(2024, 1, 3), frp=10.0, scan=1.2, acq_time="1500", sensor_family="MODIS", satellite="Aqua"),
     ]
     pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
 
@@ -69,97 +72,55 @@ def test_daily_aggregation_zero_imputation_and_rolling_windows(tmp_path: Path) -
         progress_factory=lambda total: ProgressTracker(total, stream=buf, is_tty=False),
     )
 
-    assert stats.active_cells == 2
-    assert stats.total_days == 4
-    assert stats.total_rows == 8
-    assert stats.positive_rows == 2
-    assert stats.zero_rate == 0.75
+    # Sparse output: only the 3 active (cell_id, fecha) pairs are emitted
+    assert stats.total_rows == 3
+    assert stats.modis_active_rows == 2
+    assert stats.n20_active_rows == 1
 
-    tbl = pq.read_table(daily_parquet)
-    assert tbl.schema.field("phi_modis").type == pa.float32()
-    assert tbl.schema.field("phi_viirs").type == pa.float32()
-    assert tbl.schema.field("phi_viirs_7d").type == pa.float32()
-    assert tbl.schema.field("n_viirs").type == pa.int32()
+    out = sorted(pq.read_table(daily_parquet).to_pylist(), key=lambda r: r["fecha"])
+    assert out[0]["fecha"] == date(2010, 8, 1)
+    assert out[0]["n_modis"] == 2
+    assert out[0]["n_modis_aqua"] == 1
+    assert out[0]["n_modis_terra"] == 1
+    assert out[0]["phi_modis"] == 20.0
+    assert out[0]["n_viirs_n20"] is None
+    assert out[0]["phi_viirs_n20"] is None
 
-    cell_100 = sorted((r for r in tbl.to_pylist() if r["cell_id"] == 100), key=lambda r: r["fecha"])
-    assert cell_100[0]["n_modis"] == 1
-    assert cell_100[0]["phi_modis"] == 12.0
-    assert cell_100[0]["y_occ_modis"] == 1
+    assert out[1]["fecha"] == date(2024, 1, 1)
+    assert out[1]["n_viirs_n20"] == 1
+    assert out[1]["phi_viirs_n20"] == 15.0
 
-    assert cell_100[0]["n_viirs"] == 2
-    assert cell_100[0]["phi_viirs"] == 35.0
-    assert cell_100[0]["phi_max_viirs"] == 25.0
-    assert cell_100[0]["y_occ_viirs"] == 1
-
-    assert cell_100[1]["n_viirs"] == 0
-    assert cell_100[1]["phi_modis_3d"] == 12.0
-    assert cell_100[1]["phi_viirs_3d"] == 35.0
-    assert cell_100[2]["phi_viirs_3d"] == 35.0
-
-    assert cell_100[3]["phi_viirs_3d"] == 0.0
-    assert cell_100[3]["phi_viirs_7d"] == 35.0
-    assert cell_100[3]["phi_viirs_30d"] == 35.0
+    assert out[2]["fecha"] == date(2024, 1, 3)
+    assert out[2]["n_viirs_n20"] == 0
+    assert out[2]["phi_viirs_n20"] == 0.0
+    assert out[2]["n_modis_3d"] == 1
 
     pcts = [float(m) for m in re.findall(r"(\d+\.\d+)%", buf.getvalue())]
     assert pcts[-1] == 100.0
 
 
-def test_yearly_partitioned_output_preserves_cross_year_rolling_windows(tmp_path: Path) -> None:
+def test_yearly_partitioned_preserves_cross_year_7d_window(tmp_path: Path) -> None:
     clean_parquet = tmp_path / "clean.parquet"
     out_dir = tmp_path / "daily_by_year"
 
     rows = [
-        _make_clean_row(100, date(2023, 12, 30), frp=15.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
-        _make_clean_row(100, date(2024, 1, 2), frp=5.0, scan=0.4, acq_time="1500", sensor_family="VIIRS"),
+        _make_clean_row(100, date(2023, 12, 30), frp=15.0, scan=1.2, acq_time="1500", sensor_family="MODIS", satellite="Aqua"),
+        _make_clean_row(100, date(2024, 1, 2), frp=5.0, scan=1.2, acq_time="1500", sensor_family="MODIS", satellite="Aqua"),
     ]
     pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
-
-    buf = io.StringIO()
-    stats = run_aggregation_pipeline(
-        input_parquet=clean_parquet,
-        output_parquet=out_dir,
-        progress_factory=lambda total: ProgressTracker(total, stream=buf, is_tty=False),
-    )
-
-    assert stats.total_days == 4
-    assert stats.total_rows == 4
-    assert (out_dir / "year=2023" / "data.parquet").exists()
-    assert (out_dir / "year=2024" / "data.parquet").exists()
-
-    y2024 = sorted(pq.read_table(out_dir / "year=2024" / "data.parquet").to_pylist(), key=lambda r: r["fecha"])
-    assert [r["fecha"] for r in y2024] == [date(2024, 1, 1), date(2024, 1, 2)]
-    # Jan 1 sees Dec 30 inside 3d window; Jan 2 sees Dec 30 inside 7d window
-    assert y2024[0]["phi_viirs_3d"] == 15.0
-    assert y2024[1]["phi_viirs_3d"] == 5.0
-    assert y2024[1]["phi_viirs_7d"] == 20.0
-
-    pcts = [float(m) for m in re.findall(r"(\d+\.\d+)%", buf.getvalue())]
-    assert pcts[-1] == 100.0
-
-
-def test_viirs_satellite_filter_isolates_snpp_target(tmp_path: Path) -> None:
-    clean_parquet = tmp_path / "clean_multi_viirs.parquet"
-    snpp_parquet = tmp_path / "daily_snpp.parquet"
-    all_parquet = tmp_path / "daily_all.parquet"
-
-    rows = [
-        _make_clean_row(100, date(2024, 1, 1), frp=15.0, scan=0.4, acq_time="1500", sensor_family="VIIRS", satellite="SNPP"),
-        _make_clean_row(100, date(2024, 1, 1), frp=20.0, scan=0.4, acq_time="1600", sensor_family="VIIRS", satellite="N20"),
-    ]
-    pq.write_table(pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA), clean_parquet)
-
-    run_aggregation_pipeline(input_parquet=clean_parquet, output_parquet=snpp_parquet)
-    snpp_rows = pq.read_table(snpp_parquet).to_pylist()
-    assert len(snpp_rows) == 1
-    assert snpp_rows[0]["n_viirs"] == 1
-    assert snpp_rows[0]["phi_viirs"] == 15.0
 
     run_aggregation_pipeline(
         input_parquet=clean_parquet,
-        output_parquet=all_parquet,
-        viirs_satellite="ALL",
+        output_parquet=out_dir,
+        progress_factory=lambda total: ProgressTracker(total, stream=io.StringIO(), is_tty=False),
     )
-    all_rows = pq.read_table(all_parquet).to_pylist()
-    assert len(all_rows) == 1
-    assert all_rows[0]["n_viirs"] == 2
-    assert all_rows[0]["phi_viirs"] == 35.0
+
+    assert (out_dir / "year=2023" / "data.parquet").exists()
+    assert (out_dir / "year=2024" / "data.parquet").exists()
+
+    y2024 = pq.read_table(out_dir / "year=2024" / "data.parquet").to_pylist()
+    assert len(y2024) == 1
+    assert y2024[0]["fecha"] == date(2024, 1, 2)
+    assert y2024[0]["n_modis_3d"] == 1
+    assert y2024[0]["n_modis_7d"] == 2
+    assert y2024[0]["phi_modis_7d"] == 20.0
