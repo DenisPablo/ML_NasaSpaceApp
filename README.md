@@ -50,4 +50,6 @@ Reconstruye una serie diaria nacional homogénea (`2000–2026`) de **Conteo de 
 
 - [DOCUMENTACION_PIPELINE.md](DOCUMENTACION_PIPELINE.md): Especificación técnica completa, decisiones de la Auditoría v2, variables físicas y protocolo de validación doble.
 - [FLUJO_PIPELINE.md](FLUJO_PIPELINE.md): Guía paso a paso del flujo `Datos originales → Limpieza → Agregación dispersa → ML → Serving`.
+- [EJECUCION_CLASIFICACION.md](EJECUCION_CLASIFICACION.md): Cómo ejecutar la clasificación, qué archivos devuelve y cuáles se entregan al backend.
+- [CLASIFICACION.md](CLASIFICACION.md): Etapa de clasificación y armonización **Propuesta B** (`run_classification.py`) que publica los archivos del contrato de FireHistoryInterfaceAPI (factores provincia × mes, rangos del 80 %, puntos industriales, satélites operativos).
 - [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md): Esquema exacto de la tabla de *serving* y contratos FastAPI (`/calendar`, `/hotspots.csv`, `/grid/geojson`, `/cells/{cell_id}/series`).
