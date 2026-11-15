@@ -1,0 +1,7 @@
+# Entorno del análisis (aparte del pipeline). Probado con Python 3.12.
+pandas>=2.2
+numpy>=2.0
+scipy>=1.13
+statsmodels>=0.14
+duckdb>=1.1
+pyarrow>=18.0

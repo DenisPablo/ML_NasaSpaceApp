@@ -1,0 +1,146 @@
+┌──────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│   column_name    │ column_type │  null   │   key   │ default │  extra  │
+│     varchar      │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├──────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ provincia_id     │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ mes              │ TINYINT     │ YES     │ NULL    │ NULL    │ NULL    │
+│ tipo             │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ factor           │ FLOAT       │ YES     │ NULL    │ NULL    │ NULL    │
+│ nivel_origen     │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ n_modis_calib    │ INTEGER     │ YES     │ NULL    │ NULL    │ NULL    │
+│ factores_version │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+└──────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌──────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│   column_name    │ column_type │  null   │   key   │ default │  extra  │
+│     varchar      │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├──────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ region           │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ mes              │ TINYINT     │ YES     │ NULL    │ NULL    │ NULL    │
+│ tipo             │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ factor           │ FLOAT       │ YES     │ NULL    │ NULL    │ NULL    │
+│ n_modis_calib    │ INTEGER     │ YES     │ NULL    │ NULL    │ NULL    │
+│ factores_version │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+└──────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌─────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│ column_name │ column_type │  null   │   key   │ default │  extra  │
+│   varchar   │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├─────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ modis_min   │ INTEGER     │ YES     │ NULL    │ NULL    │ NULL    │
+│ modis_max   │ INTEGER     │ YES     │ NULL    │ NULL    │ NULL    │
+│ mult_bajo   │ FLOAT       │ YES     │ NULL    │ NULL    │ NULL    │
+│ mult_alto   │ FLOAT       │ YES     │ NULL    │ NULL    │ NULL    │
+└─────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌─────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│ column_name │ column_type │  null   │   key   │ default │  extra  │
+│   varchar   │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├─────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ fecha       │ DATE        │ YES     │ NULL    │ NULL    │ NULL    │
+│ satelite    │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ operativo   │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ n_nacional  │ INTEGER     │ YES     │ NULL    │ NULL    │ NULL    │
+└─────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌──────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│ column_name  │ column_type │  null   │   key   │ default │  extra  │
+│   varchar    │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├──────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ provincia_id │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ nombre       │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ region       │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ geom_geojson │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ bbox         │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+└──────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌───────────┬────────────┬────────────┬───────────┐
+│ modis_min │ modis_max  │ mult_bajo  │ mult_alto │
+│   int32   │   int32    │   float    │   float   │
+├───────────┼────────────┼────────────┼───────────┤
+│         0 │          0 │        0.0 │       9.0 │
+│         1 │          5 │ 0.47143057 │ 4.4368014 │
+│         6 │         20 │ 0.53042686 │ 1.8741118 │
+│        21 │        100 │ 0.61664236 │ 1.3445119 │
+│       101 │        500 │  0.7350964 │ 1.2402506 │
+│       501 │ 2147483647 │  0.8313586 │ 1.1746123 │
+└───────────┴────────────┴────────────┴───────────┘
+
+┌─────────┬──────────────┬──────────────┬─────────────┬────────────────┬─────────────┐
+│  tipo   │ nivel_origen │ count_star() │ min(factor) │ median(factor) │ max(factor) │
+│ varchar │   varchar    │    int64     │    float    │     float      │    float    │
+├─────────┼──────────────┼──────────────┼─────────────┼────────────────┼─────────────┤
+│ modis   │ provincia    │          208 │   2.2209525 │      3.4358227 │   5.3896136 │
+│ modis   │ region       │           80 │   2.4447432 │      3.6909795 │   5.9416723 │
+│ terra   │ pais         │           29 │    8.195725 │      12.212949 │   19.066017 │
+│ terra   │ provincia    │          127 │    4.054898 │      8.5440235 │   22.455019 │
+│ terra   │ region       │          132 │   4.2711854 │       9.627735 │   25.938253 │
+└─────────┴──────────────┴──────────────┴─────────────┴────────────────┴─────────────┘
+
+┌─────────┬───────────┬───────┬───────┬────────┐
+│  tipo   │  region   │  mn   │  mx   │   av   │
+│ varchar │  varchar  │ float │ float │ double │
+├─────────┼───────────┼───────┼───────┼────────┤
+│ modis   │ Argentina │  3.02 │  3.89 │   3.48 │
+│ modis   │ Cuyo      │  2.96 │  3.95 │   3.44 │
+│ modis   │ NEA       │  2.89 │  3.75 │   3.28 │
+│ modis   │ NOA       │  2.62 │  4.05 │   3.18 │
+│ modis   │ Pampeana  │  3.36 │   4.4 │   3.78 │
+│ modis   │ Patagonia │  3.37 │  4.85 │   4.04 │
+│ terra   │ Argentina │  7.08 │ 15.07 │   9.75 │
+│ terra   │ Cuyo      │  6.71 │ 12.57 │   8.76 │
+│ terra   │ NEA       │  5.97 │ 15.57 │   9.66 │
+│ terra   │ NOA       │  4.78 │ 12.93 │   8.19 │
+│ terra   │ Pampeana  │  7.65 │ 20.05 │  11.08 │
+│ terra   │ Patagonia │  8.81 │ 18.07 │  11.47 │
+└─────────┴───────────┴───────┴───────┴────────┘
+  12 rows                            5 columns
+
+┌──────────┬────────────┬────────────┬───────┬────────┐
+│ satelite │ min(fecha) │ max(fecha) │ dias  │ caidos │
+│ varchar  │    date    │    date    │ int64 │ int128 │
+├──────────┼────────────┼────────────┼───────┼────────┤
+│ Aqua     │ 2002-07-04 │ 2026-11-13 │  8899 │    218 │
+│ N20      │ 2018-04-01 │ 2026-11-13 │  3149 │      8 │
+│ N21      │ 2023-03-01 │ 2026-11-13 │  1354 │      3 │
+│ SNPP     │ 2012-01-20 │ 2026-11-13 │  5412 │     64 │
+│ Terra    │ 2000-11-01 │ 2026-11-13 │  9509 │    591 │
+└──────────┴────────────┴────────────┴───────┴────────┘
+
+┌──────────────┬───────────────────────────────────────────────────────┬───────────┐
+│ provincia_id │                        nombre                         │  region   │
+│   varchar    │                        varchar                        │  varchar  │
+├──────────────┼───────────────────────────────────────────────────────┼───────────┤
+│ 02           │ Ciudad Autónoma de Buenos Aires                       │ Pampeana  │
+│ 06           │ Buenos Aires                                          │ Pampeana  │
+│ 10           │ Catamarca                                             │ NOA       │
+│ 14           │ Córdoba                                               │ Pampeana  │
+│ 18           │ Corrientes                                            │ NEA       │
+│ 22           │ Chaco                                                 │ NEA       │
+│ 26           │ Chubut                                                │ Patagonia │
+│ 30           │ Entre Ríos                                            │ Pampeana  │
+│ 34           │ Formosa                                               │ NEA       │
+│ 38           │ Jujuy                                                 │ NOA       │
+│ ·            │   ·                                                   │  ·        │
+│ ·            │   ·                                                   │  ·        │
+│ ·            │   ·                                                   │  ·        │
+│ 58           │ Neuquén                                               │ Patagonia │
+│ 62           │ Río Negro                                             │ Patagonia │
+│ 66           │ Salta                                                 │ NOA       │
+│ 70           │ San Juan                                              │ Cuyo      │
+│ 74           │ San Luis                                              │ Cuyo      │
+│ 78           │ Santa Cruz                                            │ Patagonia │
+│ 82           │ Santa Fe                                              │ Pampeana  │
+│ 86           │ Santiago del Estero                                   │ NOA       │
+│ 90           │ Tucumán                                               │ NOA       │
+│ 94           │ Tierra del Fuego, Antártida e Islas del Atlántico Sur │ Patagonia │
+└──────────────┴───────────────────────────────────────────────────────┴───────────┘
+  24 rows (20 shown)                                                     3 columns
+
+┌──────────────┬────────────┬────────────┐
+│ count_star() │ min(fecha) │ max(fecha) │
+│    int64     │    date    │    date    │
+├──────────────┼────────────┼────────────┤
+│      1890033 │ 2000-11-01 │ 2026-11-13 │
+└──────────────┴────────────┴────────────┘
+

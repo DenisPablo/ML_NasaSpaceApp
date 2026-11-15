@@ -84,10 +84,17 @@ simulando la salida de la Fase 1 con pandas:
 | Ídem, prueba hacia adelante (cal. 2012–19, prueba 2020–25) | 16,5 % (sesgo −4,9 %) | 18,3 % |
 | Error usando MODIS crudo | ≈ 70 % | ≈ 70 % |
 | Cobertura de los rangos del 80 % (en la ventana de calibración) | 83,1 % | 77,9 % (fuera de muestra) |
+| Cobertura de los rangos, prueba hacia adelante (factores y rangos 2012–19, prueba 2020–25) | 77,1 % (64,0 % en meses con > 500 focos MODIS) | — |
 
 Las diferencias menores se deben a que esta corrida usa la ventana completa 2012–2025 y la exclusión de
 días con satélite caído. Los factores `terra` llegan a ~26 en julio (Terra sola ve pocos focos en invierno),
 por eso su validación admite hasta 40 (en `modis` el límite sigue siendo 20).
+
+El 83,1 % es una medida **dentro de muestra**: aplica factores ajustados con todos los años. Por tramo, la
+cobertura dejando un año afuera da ~80 % por construcción. La cifra fuera de muestra es la de la prueba hacia
+adelante. La evaluación completa (estabilidad del factor, K, rangos por provincia, día operativo, confianza y
+anomalía), con scripts para replicarla, está en
+[`analisis/veredicto-armonizacion/`](analisis/veredicto-armonizacion/README.md).
 
 ## Pruebas
 
