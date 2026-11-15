@@ -58,4 +58,5 @@ Reconstruye una serie diaria nacional homogénea (`2000–2026`) de **Conteo de 
 - [FLUJO_PIPELINE.md](FLUJO_PIPELINE.md): Guía paso a paso del flujo `Datos originales → Limpieza → Agregación dispersa → ML → Serving`.
 - [EJECUCION_CLASIFICACION.md](EJECUCION_CLASIFICACION.md): Cómo ejecutar la clasificación, qué archivos devuelve y cuáles se entregan al backend.
 - [CLASIFICACION.md](CLASIFICACION.md): Etapa de clasificación y armonización **Propuesta B** (`run_classification.py`) que publica los archivos del contrato de FireHistoryInterfaceAPI (factores provincia × mes, rangos del 80 %, puntos industriales, satélites operativos).
+- [analisis/veredicto-armonizacion/](analisis/veredicto-armonizacion/README.md): veredicto científico de la armonización MODIS → VIIRS ("sólido con reservas", 20 hallazgos), con scripts y resultados para replicar cada cifra.
 - [BACKEND_CONTRACTS.md](BACKEND_CONTRACTS.md): ⚠️ **Reemplazado** por el contrato de FireHistoryInterfaceAPI (`docs/02`); describe la salida experimental de las fases 2–4. Esquema exacto de la tabla de *serving* y contratos FastAPI (`/calendar`, `/hotspots.csv`, `/grid/geojson`, `/cells/{cell_id}/series`).

@@ -1,0 +1,9 @@
+Anual armonizado nacional: {2001: 268346, 2002: 219140, 2003: 347925, 2004: 304874, 2005: 215820, 2006: 255202, 2007: 227273, 2008: 316796, 2009: 245761, 2010: 186041, 2011: 226012, 2012: 184126, 2013: 209158, 2014: 106921, 2015: 134953, 2016: 161126, 2017: 178448, 2018: 163010, 2019: 139058, 2020: 396896, 2021: 167459, 2022: 273915, 2023: 144778, 2024: 138133, 2025: 145671}
+Theil-Sen %/año: -2.65  Kendall tau SignificanceResult(statistic=np.float64(-0.43999999999999995), pvalue=np.float64(0.0016947235531532155))
+mediana anual 2003-2011 (estimado): 245761  2012-2025 (observado): 162068  MWU p= 0.003
+mediana por mes (2003-11 est vs 2012-25 obs, razón): [(1, 12827, 10959, np.float64(0.85)), (2, 10335, 8400, np.float64(0.81)), (3, 7755, 7487, np.float64(0.97)), (4, 5470, 3836, np.float64(0.7)), (5, 5758, 3704, np.float64(0.64)), (6, 9305, 5699, np.float64(0.61)), (7, 20043, 13616, np.float64(0.68)), (8, 54184, 33990, np.float64(0.63)), (9, 54731, 33020, np.float64(0.6)), (10, 27388, 18449, np.float64(0.67)), (11, 17603, 7532, np.float64(0.43)), (12, 8441, 6476, np.float64(0.77))]
+Categorías 2012-2026: todos los años vs solo años observados: coinciden 121/178 (68%) ; n años solo-obs = 13-14
+  ejemplos de cambio: ['2012-03:a->ma', '2012-05:n->ma', '2012-06:a->ma', '2012-07:a->ma', '2012-08:b->n', '2013-08:n->a', '2013-09:a->ma', '2013-10:a->ma', '2013-11:n->a', '2014-04:mb->b', '2014-08:mb->b', '2014-11:b->n']
+Nov-2026 parcial (1-13) armonizado=6005 vs mediana Nov=10793; noviembres con categoría alterada por incluirlo: ['2019-11:b->n']
+años por mes calendario (meses completos): {1: 26, 2: 26, 3: 26, 4: 26, 5: 26, 6: 26, 7: 26, 8: 26, 9: 26, 10: 26, 11: 26, 12: 26}
+2025-07 armonizado nacional: 10125  (gap parcial S-NPP 4-7 jul ≈ 1.000 focos faltantes por NOAA-20)
